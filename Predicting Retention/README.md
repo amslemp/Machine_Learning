@@ -8,7 +8,7 @@ The data was pulled directly from Oracle's BannerDB using PL/SQL. I wrote the qu
 
 ## Results
 
-I compared several models to see which one was best for this task and dataset. Ultimately XGBoost won out. What was most important in this dataset was *specificity* rather than just pure accuracy, because it was more costly to misclassify students who do not reenroll than students who do reenroll. I was proud to discover that several of the features that I engineered were actually the best predictors for identifying students who are most likely to not enroll for the next Fall semester. In fact, the top predictor for identifying which students will not enroll the following Fall was a non-native feature that I created. The final XGBoost model was built with a gridsearch for tuning the hyperparameters. 
+I compared several models to see which one was best for this task and dataset. Ultimately XGBoost won out. What was most important in this dataset was *specificity* rather than just pure accuracy, because it was more costly to misclassify students who do not reenroll than students who do reenroll. I was proud to discover that several of the features that I engineered were actually the best predictors for identifying students who are most likely to not enroll for the next Fall semester. In fact, the top predictor for identifying which students will not enroll the following Fall was a non-native feature that I created. The final XGBoost model was built with a gridsearch that tuned the hyperparameters. 
 
 ## Model Deployment
 
