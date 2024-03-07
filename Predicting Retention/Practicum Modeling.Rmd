@@ -1,7 +1,10 @@
 
 # Retention Prediction
 
-Retention is defined as Fall to Fall enrollment at colleges and universities. It is the proportion of students from the previous Fall semester who are enrolled in the current Fall semester and is one of the main concerns at colleges today. The goal with this model development is to identify the students who are most likely to *not* retain from Fall to Fall so that early intervention can start in their first Fall semester. Just as businesses want to retain customers because it is cheaper than gaining new ones, so to for colleges.
+Retention is defined as Fall to Fall enrollment at colleges and universities. It is the proportion of students from the previous Fall 
+semester who are enrolled in the current Fall semester and is one of the main concerns at colleges today. The goal with this model 
+development is to identify the students who are most likely to *not* retain from Fall to Fall so that early intervention can start in 
+their first Fall semester. Just as businesses want to retain customers because it is cheaper than gaining new ones, so to for colleges.
   
 
 ```{r}
@@ -56,17 +59,24 @@ dim(enrolled)
 
 # The Data
 
-There are 28792 rows and 33 columns. Not all columns are actually predictors. The final data frame for analysis has fewer columns. The IDs of each student have been removed so that there is no way to identify the students. Also, they are unnecessary for analysis. There is also no location identifier for the students such as longitude and latitude. The final dataframe for analysis has 20 predictors and one response variable.
+There are 28792 rows and 33 columns. Not all columns are actually predictors. The final data frame for analysis has fewer columns. The 
+IDs of each student have been removed so that there is no way to identify the students. Also, they are unnecessary for analysis. There is also no location identifier for the students such as longitude and latitude. The final dataframe for analysis has 20 predictors and one 
+response variable.
 
 <u>Predictors</u>
 
   * *stype* (string): Has multiple levels that denote the student type, such as "New Student," "Guest" student, "Transfer" student.
   * *gender* (string): Self identified gender of every student at the college.
-  * *ethn_desc* (string): Self identified ethnicity of each student (a little over 6% was missing. These students were not deleted but rather just given the attribute of "Missing," thus creating a new level for the ethnic description). 
+  * *ethn_desc* (string): Self identified ethnicity of each student (a little over 6% was missing. These students were not deleted but 
+  rather just given the attribute of "Missing," thus creating a new level for the ethnic description). 
   * *resd* (string): The residency of the student as determined by the student address.
   * *acd_std_desc* (string): The academic standing of the student (i.e. "Academic Suspension," "Academic Probation," "Good Standing").
   * *fully_online* (string): Designation of whether *all* of the student's classes are online or in-person.
-  * *age* (integer): The age the student was relative to the semester in which they were enrolled. Students above the age of 60 were exclusively current faculty, spouses of faculty, previous faculty or spouses of previous faculty. In the five Fall semesters considered, with 28,792 students, only 123 of them fell into this group. Those 123 were removed since they are not the target group the college is trying to retain and because including them severely skewed the age predictor, unnecessarily so. The age predictor also had the peculiarity of three students who were below the age of two years old. These three students had incorrect birthdays and were also removed, leaving a range of students between 14 and 60 years old. 
+  * *age* (integer): The age the student was relative to the semester in which they were enrolled. Students above the age of 60 were 
+  exclusively current faculty, spouses of faculty, previous faculty or spouses of previous faculty. In the five Fall semesters 
+  considered, with 28,792 students, only 123 of them fell into this group. Those 123 were removed since they are not the target group the   college is trying to retain and because including them severely skewed the age predictor, unnecessarily so. The age predictor also had 
+  the peculiarity of three students who were below the age of two years old. These three students had incorrect birthdays and were also 
+  removed, leaving a range of students between 14 and 60 years old. 
   * *inst_earned* (float): The number of credit hours a student has *earned* at the instiution.
   * *term_att_crhr* (float): The number of credit hours a student has *attempted* for the given semester.
   * *term_earn_crhr* (float): The number of credit hours a student has *earned* for the given semester.
@@ -76,16 +86,23 @@ There are 28792 rows and 33 columns. Not all columns are actually predictors. Th
   * *pell* (integer): An indicator variable of 1 or 0 for a student who has received a Pell grant.
   * *subsidized* (integer): An indicator variable of 1 or 0 for a student who has received a subsidized loan.
   * *unsubsidized* (integer): An indicator variable of 1 or 0 for a student who has received an unsubsidized loan.
-  * *summer_plus* (integer): An indicator variable of 1 or 0 for a student who received tuition reimbursement for participating in the summer plus program at the institution.
+  * *summer_plus* (integer): An indicator variable of 1 or 0 for a student who received tuition reimbursement for participating in the 
+  summer plus program at the institution.
   * *kansas_promise* (integer): An indicator variable of 1 or 0 for a student who is receiving a scholarship through Kansas Promise.
-  * *all_fafsa* (integer): A numeric value from 0 to $n$ that represents the total number of *accepted* scholarships, loans, and grants a student has for a given semester. 
-  * *hs_matriculation* (string): Binary variable that records whether the student enrolled in the Fall directly after their HS graduation or not.
+  * *all_fafsa* (integer): A numeric value from 0 to $n$ that represents the total number of *accepted* scholarships, loans, and grants a   student has for a given semester. 
+  * *hs_matriculation* (string): Binary variable that records whether the student enrolled in the Fall directly after their HS graduation   or not.
   
 <u>Response</u>
 
-  * *enrolled* (string): A binary outcome that indicates whether a student enrolled for the Fall semester who was present at the institution in the previous Fall semester. This is traditionally referred to in the research literature as *retention*. 
+  * *enrolled* (string): A binary outcome that indicates whether a student enrolled for the Fall semester who was present at the 
+  institution in the previous Fall semester. This is traditionally referred to in the research literature as *retention*. 
   
-This analysis covers the last five Fall semesters at the institution, Fall 2019, Fall 2020, Fall 2021, Fall 2022, and Fall 2023. Since the goal is to predict which students from the previous Fall semester reenroll in the next Fall semester (i.e. retention), the only semesters actually kept are 2019, 2020, 2021, and 2022. This is because checking which students from Fall 2022 reenrolled in Fall 2023 only requires that Fall 2022 be compared against Fall 2023 to see which students from Fall 2022 ended up in Fall 2023. Retention for Fall 2023 cannot yet be calculated because that is only possible once Fall 2024 starts. *Retention*, in the research literature, is defined as the proportion of students from the previous Fall semester that enroll in the current Fall semester.
+This analysis covers the last five Fall semesters at the institution, Fall 2019, Fall 2020, Fall 2021, Fall 2022, and Fall 2023. Since 
+the goal is to predict which students from the previous Fall semester reenroll in the next Fall semester (i.e. retention), the only 
+semesters actually kept are 2019, 2020, 2021, and 2022. This is because checking which students from Fall 2022 reenrolled in Fall 2023 
+only requires that Fall 2022 be compared against Fall 2023 to see which students from Fall 2022 ended up in Fall 2023. Retention for Fall
+2023 cannot yet be calculated because that is only possible once Fall 2024 starts. *Retention*, in the research literature, is defined as
+the proportion of students from the previous Fall semester that enroll in the current Fall semester.
 
 The response variable was created by comparing the students who enrolled in the previous Fall to the list of students who enrolled in the current Fall semester. When an ID was matched in both semesters, that student was noted as "Enrolled"; when a student from the previous Fall did not match an ID in the current Fall semester, that student was noted as "Not Enrolled." The "Not Enrolled" to "Enrolled" ratio is 0.5942 (N = 11735) to 0.5942 (N = 17182). While this dataset is imbalanced, it is not so severe that it warrants using strategies such as SMOTE, ADASYN, or Random Undersampling to address it. 
 
