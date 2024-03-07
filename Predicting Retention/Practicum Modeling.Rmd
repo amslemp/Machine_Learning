@@ -1746,7 +1746,8 @@ ggplot(cart_importance_df, aes(x = reorder(Variable, Importance), y = Importance
 
 ```
 
-**The CART model had to be redone with the original numeric values. CARTs do well with unscaled values, handle outliers well, and handle categorical variables well. I still used the same train/test split by using the training.samples from the original.**
+**The CART model had to be redone with the original numeric values. CARTs do well with unscaled values, handle outliers well, and handle
+categorical variables well. I still used the same train/test split by using the training.samples from the original.**
 
 ```{r}
 
