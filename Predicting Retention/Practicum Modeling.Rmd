@@ -1,7 +1,7 @@
 
 # Retention Prediction
 
-Retention is defined as Fall to Fall enrollment at colleges and universities. It is the proportion of students from the previous Fall semester who are enrolled in the current Fall semester and is one of the main concerns at colleges today. The goal with this model development is to identify the students who are most likely to *not* retain from Fall to Fall so that early intervention can start in their first Fall semester. Just as businesses want to retain customers because it is cheaper than gaining new ones, so to for colleges.
+Retention is defined as Fall to Fall enrollment at colleges and universities. It is the proportion of students from the previous Fall semester \n who are enrolled in the current Fall semester and is one of the main concerns at colleges today. The goal with this model development is to identify the students who are most likely to *not* retain from Fall to Fall so that early intervention can start in their first Fall semester. Just as businesses want to retain customers because it is cheaper than gaining new ones, so to for colleges.
   
 
 ```{r}
