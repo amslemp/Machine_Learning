@@ -8,6 +8,8 @@ This was an ad hoc, one-off analysis. Therefore, there was no model deployment.
 
 This is a *natural experiment* in that the conditions for the experiement are determined by factors outside of the control of the advising office. In this case, the two groups are those who did not recieve a follow up email or phone call and those that did. The control group is the students who did not receive a follow-up email or phone call, while the experimental group is the students that did receive follow up contacts.
 
+Note, this data includes student information and therefore, due to FERPA laws, the raw data files cannot be included. 
+
 **The Response**
 
 The response variable indicates whether the studnet is enrolled in the next semester or not. 
