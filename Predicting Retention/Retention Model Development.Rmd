@@ -1,0 +1,1923 @@
+
+# Retention Prediction
+
+Retention is defined as Fall to Fall enrollment at colleges and universities. It is the proportion of students from the previous Fall 
+semester who are enrolled in the current Fall semester and is one of the main concerns at colleges today. The goal with this model 
+development is to identify the students who are most likely to *not* retain from Fall to Fall so that early intervention can start in 
+their first Fall semester. Just as businesses want to retain customers because it is cheaper than gaining new ones, so to for colleges.
+  
+
+```{r}
+
+# Clear objects
+rm(list = ls())
+
+# For reproducibility  
+set.seed(101)
+
+# Set to non-scientific notation
+options(scipen = '0')
+
+# set working directory
+setwd('C:/Users/aslemp/Desktop/pandas/Butler Programming/Banner SQL/Project Articles/')
+
+# Load libraries
+  
+library(tidyverse)
+library(ggplot2)
+library(glmnet)
+library(caret)
+library(ggpubr)
+library(e1071)
+library(pROC)
+library(randomForest)
+
+
+# Load dataset
+enrolled <- read_csv('FA19 - FA23 Cleaned Dataset.csv')
+
+dim(enrolled)
+
+## [1] 28917    33
+
+summary(enrolled)
+
+table(enrolled$enrolled)
+
+# Isolate only students that are below the age of 60. This eliminates 123 students (0.42%)
+# Nearly all of these students are Faculty, spouses of faculty, or previous faculty
+# Remove all students below the age of ten, which was three students. Their age was not recorded
+# correctly. Two of the students were below the age of 1 and one was precisely 2 years old. 
+enrolled <- enrolled %>%
+              filter(age <= 60 & age >= 10)
+
+dim(enrolled)
+
+## [1] 28792    33
+
+```
+
+# The Data
+
+There are 28792 rows and 33 columns. Not all columns are actually predictors. The final data frame for analysis has fewer columns. The 
+IDs of each student have been removed so that there is no way to identify the students. Also, they are unnecessary for analysis. There is
+also no location identifier for the students such as longitude and latitude. The final dataframe for analysis has 20 predictors and one 
+response variable.
+
+<u>Predictors</u>
+
+  * *stype* (string): Has multiple levels that denote the student type, such as "New Student," "Guest" student, "Transfer" student.
+  * *gender* (string): Self identified gender of every student at the college.
+  * *ethn_desc* (string): Self identified ethnicity of each student (a little over 6% was missing. These students were not deleted but 
+  rather just given the attribute of "Missing," thus creating a new level for the ethnic description). 
+  * *resd* (string): The residency of the student as determined by the student address.
+  * *acd_std_desc* (string): The academic standing of the student (i.e. "Academic Suspension," "Academic Probation," "Good Standing").
+  * *fully_online* (string): Designation of whether *all* of the student's classes are online or in-person.
+  * *age* (integer): The age the student was relative to the semester in which they were enrolled. Students above the age of 60 were 
+  exclusively current faculty, spouses of faculty, previous faculty or spouses of previous faculty. In the five Fall semesters 
+  considered, with 28,792 students, only 123 of them fell into this group. Those 123 were removed since they are not the target group the
+  college is trying to retain and because including them severely skewed the age predictor, unnecessarily so. The age predictor also had 
+  the peculiarity of three students who were below the age of two years old. These three students had incorrect birthdays and were also 
+  removed, leaving a range of students between 14 and 60 years old. 
+  * *inst_earned* (float): The number of credit hours a student has *earned* at the instiution.
+  * *term_att_crhr* (float): The number of credit hours a student has *attempted* for the given semester.
+  * *term_earn_crhr* (float): The number of credit hours a student has *earned* for the given semester.
+  * *term_gpa* (float): The Grade Point Average (GPA) a student earns in a specific semester.
+  * *inst_gpa* (float): The Grade Point Average a student has earned at the institution. 
+  * *no_pell* (integer): An indicator variable of 1 or 0 for a student who has not received a Pell grant.
+  * *pell* (integer): An indicator variable of 1 or 0 for a student who has received a Pell grant.
+  * *subsidized* (integer): An indicator variable of 1 or 0 for a student who has received a subsidized loan.
+  * *unsubsidized* (integer): An indicator variable of 1 or 0 for a student who has received an unsubsidized loan.
+  * *summer_plus* (integer): An indicator variable of 1 or 0 for a student who received tuition reimbursement for participating in the 
+  summer plus program at the institution.
+  * *kansas_promise* (integer): An indicator variable of 1 or 0 for a student who is receiving a scholarship through Kansas Promise.
+  * *all_fafsa* (integer): A numeric value from 0 to $n$ that represents the total number of *accepted* scholarships, loans, and grants a
+  student has for a given semester. 
+  * *hs_matriculation* (string): Binary variable that records whether the student enrolled in the Fall directly after their HS graduation
+  or not.
+  
+<u>Response</u>
+
+  * *enrolled* (string): A binary outcome that indicates whether a student enrolled for the Fall semester who was present at the 
+  institution in the previous Fall semester. This is traditionally referred to in the research literature as *retention*. 
+  
+This analysis covers the last five Fall semesters at the institution, Fall 2019, Fall 2020, Fall 2021, Fall 2022, and Fall 2023. Since 
+the goal is to predict which students from the previous Fall semester reenroll in the next Fall semester (i.e. retention), the only 
+semesters actually kept are 2019, 2020, 2021, and 2022. This is because checking which students from Fall 2022 reenrolled in Fall 2023 
+only requires that Fall 2022 be compared against Fall 2023 to see which students from Fall 2022 ended up in Fall 2023. Retention for Fall
+2023 cannot yet be calculated because that is only possible once Fall 2024 starts. *Retention*, in the research literature, is defined as
+the proportion of students from the previous Fall semester that enroll in the current Fall semester.
+
+The response variable was created by comparing the students who enrolled in the previous Fall to the list of students who enrolled in the
+current Fall semester. When an ID was matched in both semesters, that student was noted as "Enrolled"; when a student from the previous
+Fall did not match an ID in the current Fall semester, that student was noted as "Not Enrolled." The "Not Enrolled" to "Enrolled" ratio
+is 0.5942 (N = 11735) to 0.5942 (N = 17182). While this dataset is imbalanced, it is not so severe that it warrants using strategies such
+as SMOTE, ADASYN, or Random Undersampling to address it. 
+
+Several other variables were not native to the database but were created. *Fully_Online* was a variable created by looping through the
+location designation in the database for each class in each student schedule, counting the number of online courses a student was in, and
+dividing that number by the total number of courses in which the student was enrolled. If one hundred percent of their courses were
+online, the student was designated as "fully online," and if even one course was in-person, the student was labeled as "Not Fully
+Online." *no_pell*, *pell*, *subsidized*, *unsubsidized*, *summer_plus*, and *kansas_promise* were all created from the financial aid
+data. There are hundreds of financial aid designations between these monikers and all of the other scholarships available. A student
+could feasibly have all of the last five of the attributes (pell, subsidized, unsubsidized, summer_plus, and kansas_promise) since each
+of these is created as a dummy variable. The only one that implies the student received no scholarships, loans, or pell grant monies is
+if the student is labeled as "no_pell." The last generated variable is *hs_matriculation* which is a variable created by comparing the
+year the student graduated high school to the year they started in the Fall. For instance, if a student graduated high school in May 2020
+and enrolled for college in Fall of 2020, a three month time span in between graduation and first start, that student is labeled as "From
+HS." Those that did not enroll right after high school are labeled as "Not From HS." 
+
+Summer+ was a promotional by the college for students to take at least six credits in the summer. If a student took at least six credits
+during the summer, then three free credits were awarded to that student in the Fall. Because of this, the hypothesis is that it
+influenced students to enroll in the following Fall. About fifty percent of the students who enroll in the Summer were enrolled in the
+immediate Fall semester that preceded it. Therefore, since retention is tracking Fall to Fall enrollment, this seemed like a good
+predictor to include. 
+
+Kansas Promise is a scholarship started by the state of Kansas that has very specific stipulations. "The bill permits students to enroll
+on a part-time or full-time basis, but students must maintain satisfactory academic progress toward completion of the promise-eligible
+program and complete the program within 36 months from the first award.  Upon completion of the program, students must reside and work in
+Kansas for a minimum of two consecutive years or enroll in a Kansas institution of higher education and subsequently reside and work in
+Kansas for a minimum of two consecutive years" (KBOR, 2023).
+https://kansasregents.org/students/student_financial_aid/promise-act-scholarship Given that students have to finish within 36 months and
+must maintain satisfactory progress (meaning they cannot be placed on academic suspension), this was a good predictor to include. If a
+student fails to maintain satisfactory progress or does not finish in 36 months, the student will have to pay back the funds provided
+plus accrued interest at the federal PLUS program interest rate (ibid.). 
+
+Finally, the reference level was manually set for two of the categorical variables, *ethn_desc* and *stype*. For the ethnic description,
+the reference level is set to "Caucasian/White" and for the student type, the reference level was set to "Continuing Student." 
+
+## Eliminate Collinear Variables
+
+There are a number of variables that are derivations of others or are simply duplicates. For instance *totcr*, reports the total number
+of credits a student attempted for the given semester. *term_att_crhr* reveals the same thing. Therefore, I will eliminate *totcr*.
+Similarly, *status* is a designation based on an aggregate of the number of credits a student is in during the given semester. A student
+who is less than 6 credits is less than half time. A student who is in 6 - 11 credits is half time. A student who is in 12 or more
+credits is full time. This is collinear with the *term_att_crhr* once again, which is why it is being removed as well. *cnty_desc1* and
+*resd_desc* are unnecessary because they are collinear with the *resd*. While *degcode* is not collinear with anything, it is not a
+particularly helpful predictor, which is why it is not being used. *pidm* is also repetitive and unnecessary. The correlation matrix
+showed that two of the variables are highly correlated. 
+
+### Correlation Plot
+
+```{r echo = FALSE}
+
+library(corrplot)
+
+predictors <- c('age', 'term_att_crhr', 'term_gpa', 'inst_gpa', 'term_earn_crhr', 'inst_earned', 'inst_hrs_att', 'overall_gpa')
+
+# Specify the file name and resolution
+png(filename = "correlation_plot.png", width = 800, height = 800, res = 100)
+
+# Develop correlation matrix
+cor_matrix <- cor(enrolled[predictors], use = 'complete.obs')
+
+# Create the plot
+corrplot(cor_matrix, 
+         method = 'number', 
+         type = 'lower', 
+         tl.cex = 1,
+         tl.srt = 45)
+title(main = 'Correlation Plot of Numeric Predictors', 
+      line = 3,
+      cex.main = 1.75)
+
+# Close the device
+dev.off()
+
+```
+
+After viewing the correlation matrix, removing the "overall_gpa" and "inst_hrs_att" variables is best because they are 97% and 93%
+correlated with "inst_gpa" and "inst_earned," respectively. Therefore, it is near impossible to know which is truly contributing to the 
+prediction. "Overall GPA" was removed because it includes transfer grades, which not all students have but all students do have an
+"Institutional GPA." "Institutional Hours Attempted" was removed because what is more important is the number of credits the student
+completed rather than what they attempted.
+
+# Load Data
+
+```{r}
+
+# Select rows to be used
+enrolled_mod <- as.data.frame(enrolled[ ,c('enrolled', 'stype', 'gender', 'ethn_desc', 'resd', 'acd_std_desc', 'fully_online', 'age', 'inst_earned', 'term_att_crhr', 'term_earn_crhr', 'term_gpa', 'inst_gpa', "no_pell", "pell", "subsidized", "unsubsidized", "summer_plus", "kansas_promise", "all_fafsa", 'hs_matriculation')])
+
+numeric <- c('age', 'inst_earned', 'term_att_crhr', 'term_earn_crhr', 'term_gpa', 'inst_gpa')
+categorical <- c('enrolled', 'stype', 'gender', 'ethn_desc', 'resd', 'acd_std_desc', 'fully_online', 'hs_matriculation')
+
+# Exclude the "DO NOT USE" students from the ethn_desc (11 students)
+enrolled_mod <- enrolled_mod[which(enrolled_mod$ethn_desc != 'DO NOT USE - Hispanic'), ]
+
+# One student had a 'Z' residency type
+enrolled_mod <- enrolled_mod[which(enrolled_mod$resd != 'Z'), ]
+
+# Three students had an age that was obvious incorrect because their age was two years old or less.
+enrolled_mod <- enrolled_mod[which(enrolled_mod$age >= 13), ]
+
+# Fill NA values in hs_matriculation with "Not From HS"
+enrolled_mod <- enrolled_mod %>%
+                   mutate(hs_matriculation = if_else(is.na(hs_matriculation), 'Not From HS', hs_matriculation))
+
+
+#convert all numeric values to double
+for(i in  numeric) {
+  
+  enrolled_mod[, i] <- as.double(enrolled_mod[, i])
+  
+}
+
+# Loop through each numeric column in "enrolled_mod" and standardize its values
+for(i in numeric) {
+  
+  enrolled_mod[, i] <- scale(enrolled_mod[, i])
+  
+}
+
+#Convert categorical variables to factors
+for(i in categorical){
+  
+  enrolled_mod[,i] <- as.factor(enrolled_mod[,i])
+  
+}
+
+# Set reference level
+enrolled_mod$ethn_desc <- relevel(enrolled_mod$ethn_desc, ref = 'Caucasian/White')
+enrolled_mod$stype <- relevel(enrolled_mod$stype, ref = 'C')
+enrolled_mod$enrolled <- relevel(enrolled_mod$enrolled, ref = 'Enrolled')
+enrolled_mod$fully_online <- relevel(enrolled_mod$fully_online, ref = 'Fully Online')
+
+
+```
+
+## Split Data Into Training and Test Sets
+
+The data was split into a training and test set with 80% used for training and 20% used for a test set.
+
+```{r}
+
+training.samples <- enrolled_mod$enrolled %>%
+                     createDataPartition(p = 0.8, list = FALSE)
+
+train.data <- enrolled_mod[training.samples, ]
+test.data <- enrolled_mod[-training.samples, ] 
+
+```
+
+# Exploratory Data Analysis (EDA)
+
+## Numeric variables
+
+### Violin Plots
+
+```{r}
+
+# Make boxplots of all numeric data against the response variable
+
+age_enroll <- ggplot(enrolled, aes(x = enrolled, y = age)) +
+                geom_violin(fill = '#69b3a2') + 
+                geom_boxplot(alpha = 0.8,
+                             width = 0.1,
+                             outlier.color = 'red') +
+                labs(x = NULL,
+                     y = "Age",
+                     title = "Age and Enrollmnet") + 
+                theme(plot.title = element_text(size = 12),
+                      axis.title.y = element_text(size = 12))
+
+crhr_enroll <- ggplot(enrolled, aes(x = enrolled, y = term_att_crhr)) +
+                  geom_violin(fill = '#69b3a2') + 
+                  geom_boxplot(width = 0.1,
+                               alpha = 0.8, 
+                               outlier.color = 'red') +
+                  labs(x = NULL,
+                       y = "Credits",
+                       title = "Att CrHr and Enrollment") + 
+                  theme(plot.title = element_text(size = 12),
+                        axis.title.y = element_text(size = 12))
+
+trmgpa_enroll <- ggplot(enrolled, aes(x = enrolled, y = term_gpa)) +
+                    geom_violin(fill = '#69b3a2') + 
+                    geom_boxplot(width = 0.1, 
+                                 alpha = 0.8,
+                                 outlier.color = 'red') +
+                    labs(x = NULL,
+                         y = "Term GPA",
+                         title = "Term GPA and Enrollment") + 
+                    theme(plot.title = element_text(size = 12),
+                          axis.title.y = element_text(size = 12))
+
+instgpa <- ggplot(enrolled, aes(x = enrolled, y = inst_gpa)) +
+            geom_violin(fill = '#69b3a2') + 
+            geom_boxplot(width = 0.1, 
+                         alpha = 0.8,
+                         outlier.color = 'red') +
+            labs(x = NULL,
+                 y = 'Inst GPA',
+                 title = 'Inst GPA and Enrollment') + 
+            theme(plot.title = element_text(size = 12),
+                  axis.title.y = element_text(size = 12))
+
+crhrern <- ggplot(enrolled, aes(x = enrolled, y = term_earn_crhr)) +
+                geom_violin(fill = '#69b3a2') + 
+                geom_boxplot(width = 0.1, 
+                             alpha = 0.8,
+                             outlier.color = 'red') +
+                labs(x = NULL,
+                     y = "Term CrHr",
+                     title = "Term Crhr Earned and Enrollment")  + 
+                theme(plot.title = element_text(size = 12),
+                      axis.title.y = element_text(size = 12))
+
+totinshrs <- ggplot(enrolled, aes(x = enrolled, y = inst_earned)) +
+                geom_violin(fill = '#69b3a2') +
+                geom_boxplot(width = 0.1, 
+                             alpha = 0.8,
+                             outlier.color = 'red') +
+                labs(x = NULL,
+                     y = "Earned Inst CrHr",
+                     title = "Tot Inst Hrs Earned and Enrollment") + 
+                theme(plot.title = element_text(size = 12),
+                      axis.title.y = element_text(size = 12))
+
+#overallgpa <- ggplot(enrolled, aes(x = enrolled, y = overall_gpa)) +
+#               geom_violin(fill = '#69b3a2') + 
+#                geom_boxplot(width = 0.1,
+#                             alpha = 0.8,
+#                             outlier.color = 'red') + 
+#                labs(x = NULL,
+#                     y = 'Overall GPA',
+#                     title = 'Overall GPA and Enrollment') + 
+#                theme(plot.title = element_text(size = 12),
+#                      axis.title.y = element_text(size = 12))
+
+#instearnatt <- ggplot(enrolled, aes(x = enrolled, y = inst_earn_att)) +
+#                  geom_violin(fill = '#69b3a2') + 
+#                  geom_boxplot(width = 0.1,
+#                               alpha = 0.8,
+#                               outlier.color = 'red') + 
+#                  labs(x = NULL,
+#                       y = 'Credit Hours',
+#                       title = 'Inst Earned/Tot CrHr At Inst') + 
+#                  theme(plot.title = element_text(size = 12),
+#                        axis.title.y = element_text(size = 12))
+
+#instoverallgpa <- ggplot(enrolled, aes(x = enrolled, y = inst_overall_gpa)) + 
+#                    geom_violin(fill = '#69b3a2') + 
+#                    geom_boxplot(width = 0.1,
+#                                 alpha = 0.8,
+#                                 outlier.color = 'red') + 
+#                    labs(x = NULL,
+#                         y = 'GPA',
+#                         title = 'Overall * Inst GPA and Enrollment') + 
+#                    theme(plot.title = element_text(size = 12),
+#                          axis.title.y = element_text(size = 12))
+                  
+
+
+
+boxes <- ggarrange(age_enroll, crhr_enroll, trmgpa_enroll, instgpa, crhrern, totinshrs,
+                   ncol = 2, nrow = 3)
+
+
+boxes
+
+# save image
+#ggsave("boxplot.png", boxes)
+
+
+#--------------------------------------------------------
+# View the explicit quartiles of each violin plot
+#--------------------------------------------------------
+
+# List of predictor variable names
+predictors <- c("age", "term_att_crhr", "term_gpa", "inst_gpa", "term_earn_crhr", "inst_earned", "inst_hrs_att", "overall_gpa")
+
+# Initialize an empty data frame to store the results
+quartile_results <- data.frame()
+
+# Loop through each predictor
+for (pred in predictors) {
+  
+  # Group by 'enrolled' and calculate quartiles
+  temp_results <- enrolled %>%
+    group_by(enrolled) %>%
+    summarise(Q1 = quantile(.data[[pred]], 0.25),
+              Q2 = quantile(.data[[pred]], 0.5),
+              Q3 = quantile(.data[[pred]], 0.75))
+  
+  # Add the predictor name to the results
+  temp_results$variable <- pred
+  
+  # Bind the results to the main dataframe
+  quartile_results <- rbind(quartile_results, temp_results)
+  
+}
+
+# View the results
+
+# Convert quartile_results to a longer format
+long_results <- quartile_results %>%
+  pivot_longer(cols = starts_with("Q"), names_to = "Quantile", values_to = "Value")
+
+# Now pivot it to the desired structure
+pivoted_results <- long_results %>%
+  pivot_wider(names_from = c("enrolled", "Quantile"), values_from = "Value")
+
+# View the results
+pivoted_results %>%
+  select(variable, Enrolled_Q1, Enrolled_Q2, Enrolled_Q3, 'Not Enrolled_Q1', 'Not Enrolled_Q2', 'Not Enrolled_Q3')
+
+```
+Higher education is typically attended by the young, which makes the *age* verses *enrolled* violin plot unsurprising. There is a higher
+concentration of students between 18-20 years old for those that retain from Fall to Fall than for those that do not. The median age for
+retained students is 19.5 years old where as the median age of those that do not retain from Fall to Fall is nearly a year older at 20.4
+years old. 
+
+The attempted credit hours per semester for the students who retained from Fall to Fall is one credit hour higher for each quartile than
+for those that do not retain from Fall to Fall. Moreover, there is a higher concentration of students who are full-time (i.e. 12 credit
+hours or more) for those that retain from Fall to Fall. One must be very careful here, because some researchers (Ad Astra 2023
+conference) are tempted to claim from this that *academic momentum*, as they call it, has a *causal* effect on retention. This could not
+be further from the truth. As a domain expert who has met with nearly 18,000 students in nine years, I can attest that the amount of
+credit hours in which a student enrolls is *reflective* of the student's outside obligations. The mistake is saying that credit hours are
+the driver of retention. It is not, "Put students in more credits, and then they will retain at higher rates." It is, "Take care of
+students' outside commitments for them--give them money for tuition, books, childcare and bills--and they will take more credits and
+retain at a higher rate" (cf. Kolenovic, Linderman & Karp, 2013). The key here is to delineate between *descriptive* and *prescriptive*
+predictors. In this case, attempted credit hours per semester *describes* the ability of students to handle certain levels of credit
+hours *given* their outside obligations. 
+
+The semester GPA (i.e. term GPA) has a wide disparity for those that retained from Fall to Fall than those that did not. The bottom
+quartile GPA for those that retained is 2.66, whereas the bottom quartile GPA for those that did not retain was 1.50. The top 50% had a
+GPA of 3.33 or higher for those that retained while the top 50% of those that did not retain had a GPA of 3.00 or higher. It is not
+surprising that those that retain at higher rates have a higher concentration of GPAs at or above 3.0 whereas the density plot shown in
+the violin of the "Not Enrolled" for the *Term GPA* is much more dispersed with three main peaks, 0.00 GPA, 2.5, 3.0, and 4.0. In the
+retained (i.e. "Enrolled") plot for *Term GPA*, the students who have a GPA below 0.70 are *outliers*. 
+
+Institutional GPA, which is the cumulative GPA a student has earned during their time at the college, is almost exclusively 2.0 or higher
+for retained students. Conversely, students who do not retain from fall to Fall have a flatter distribution. While still maintaining a
+distribution that is heaviest from 2.0 to 4.0, there are far more in the bottom half with an actual peak in the density plot at 0.0. This
+is not surprising because a student can only persist in a college by maintaining a 2.0 or higher. The longer a student is at the college,
+the more likely it is that the student has a 2.0 or higher. In fact, by policy, if a student earns below a 2.0 GPA for two consecutive
+semesters, that students will be put on Academic Suspension. Three semesters below a 2.0 and a student will be asked to take at least a
+semester off. 
+
+Earned credit hours for students who retained from Fall to Fall are, on average, two credit hours below what was attempted for all
+quartiles by these same students, forming almost a Christmas tree shape. These students earned six or more credit hours 71.08% of the
+time verses students who did not retain earned 6 or more credit hours 54.32% of the time. This predictor is important because it is an
+indication of dropped credit hours. Significantly, students who drop or fail more than one-third of their credit hours will usually incur
+financial aid penalties. Some will go on financial aid warning, a state that allows them to enroll the next semester with financial aid
+but with stipulations. Some will be put on financial aid suspension, which, for most, will create a hard stop for future enrollment for
+many semesters to come. The reason for this is because most will have to pay for six credits on their own and pass them before they will
+be allowed to use financial aid again. At the community college level, this means most of these students stop out after financial aid
+suspension for multiple semesters, sometimes never to return. Students who do not retain attempt fewer credit hours each semester and
+therefore experience greater problems when they drop because of proportionality. A student enrolled in 9 credits who drops a four credit
+pathophysiology course finishes the semester with a 55.56% completion rate. A student enrolled in 12 credits, however, who drops a four
+credit pathophysiology course finishes the semester with a 66.67% completion rate. 
+
+Finally, total institutional hours earned is a great proxy for conscientiousness, mentioned in the introduction. Since colleges cannot
+administer the Five Factor psychological evaluation at the start of a student's academic career in higher education to ascertain their
+proclivities, predictors such as the institutional hours earned are necessary to loosely predict it. It stands to reason that the more
+credits a student earns at an institution, the higher their level of conscientiousness. Remember, the scale is a sliding scale;
+therefore, students can *lean* towards conscientiousness and not be the *most* conscientious. Not surprisingly, then, students who *do*
+*not* retain from Fall to Fall have much fewer credit hours in the bottom 50% than those who do retain. Students who do not retain earn
+24 credits or fewer in the bottom 50%, where as students who *do* retain from Fall to Fall have 46 hours or fewer in the bottom 50%,
+having earned 22 more credits than those who do not make it to the next Fall. One should also notice that for both the "Enrolled" and
+"Not Enrolled," there is a spike around the 60 credit hour mark. This is because, at the two year level, students graduate at 60 credits;
+so students will necessarily *not* retain from Fall to Fall once they graduate. For those that *do* retain after earning 60 credits, 50%
+of them are enrolled in a pre-nursing major or are already in the nursing program at the college. 
+
+### Bootstrap Estimate of Distribution
+
+The violin plots clearly demonstrate that the numeric predictors do not exhibit a normal distribution in relation to the binary response
+variable. Consequently, a bootstrapped difference of means test was applied in order to accurately ascertain the statistical differences
+in the means of the two groups. To accomplish this, 10000 simulations for each predictor were ran in relation to the binary outcomes. 
+
+```{r}
+
+#------------------------------------------------------
+# Bootstrap for all predictors
+#------------------------------------------------------
+
+# List of predictor variable names
+predictors <- c('age', 'term_att_crhr', 'term_gpa', 'inst_gpa', 'term_earn_crhr', 'inst_earned')
+
+# Initialize an empty dataframe to store the results
+results <- data.frame(variable = character(0),
+                      lower_quantile = numeric(0),
+                      grand_mean = numeric(0),
+                      upper_quantile = numeric(0))
+
+# Number of bootstrap samples
+n_bootstrap = 10000
+
+bootstrap_diff_means <- NULL
+
+# Loop through all predictor variables
+for (pred in predictors) {
+  
+  # Extract the data for 'Not Enrolled' and 'Enrolled'
+  data_0 <- enrolled[[pred]][enrolled$enrolled == 'Not Enrolled']
+  data_1 <- enrolled[[pred]][enrolled$enrolled == 'Enrolled']
+  
+  # Initialize bootstrap
+  for (i in 1:n_bootstrap) {
+    
+    bootstrap_sample_0 <- sample(data_0, size = length(data_0), replace = TRUE)
+    bootstrap_sample_1 <- sample(data_1, size = length(data_1), replace = TRUE)
+    
+    bootstrap_diff_means[i] <- mean(bootstrap_sample_0) - mean(bootstrap_sample_1)
+    
+  }
+  
+  # Calculate 2.5% and 97.5% quantiles for the difference in means
+  conf_int_low <- quantile(bootstrap_diff_means, 0.025)
+  conf_int_high <- quantile(bootstrap_diff_means, 0.975)
+  
+  # Grand mean of bootstrap sample mean
+  grand_mean_value <- mean(bootstrap_diff_means)
+  
+  # Store results in the DF
+  results <- rbind(results, data.frame(variable = pred,
+                                       lower_quantile = conf_int_low,
+                                       grand_mean = grand_mean_value,
+                                       upper_quantile = conf_int_high))
+}
+
+# View results
+results
+
+```
+
+**Analysis of Bootstrapped Difference of Means Test**
+
+The 95% confidence interval reveals that none of the intervals for any of the predictors contain zero, which supports the reasonable
+conclusion that there *is* a statistically significant difference between the means of the two groups for each predictor. Moreover, it
+suggests there is a statistically significant association between the response variable and each numeric predictor. 
+
+### Mann-Whitney U Test
+
+The null hyothesis of the Mann-Whitney U Test is:
+
+$H_0$: The distributions of both groups are identical.
+
+Alternatively, the alternate hypothesis is:
+
+$H_a$: The distributions of both groups are *not* identical.
+
+```{r}
+
+# Initialize an empty dataframe to store the results
+mwu_results <- data.frame(variable = character(0),
+                          mann_whitney_U = numeric(0),
+                          p_value = numeric(0))
+
+# Loop through all predictors
+for(pred in predictors) {
+  
+  # Extract the data for the "Enrolled" and "Not Enrolled"
+  data_0 <- enrolled[[pred]][enrolled$enrolled == 'Not Enrolled']
+  data_1 <- enrolled[[pred]][enrolled$enrolled == 'Enrolled']
+                     
+  # Perform the Mann-Whitney U Test
+  mwu_test <- wilcox.test(data_0, data_1)
+  
+  cat("Running test for:", pred, "\n")
+  cat("Statistic:", mwu_test$statistic, "\n")
+  cat("P-value:", mwu_test$p.value, "\n\n")
+  
+  # Put results in empty dataframe
+  mwu_results <- rbind(mwu_results, data.frame(variable = pred,
+                                               mann_whitney_U = mwu_test$statistic,
+                                               p_value = round(mwu_test$p.value[[1]], 6)))
+}
+
+# View results of Mann-Whitney Test.
+mwu_results
+
+```
+
+**Analysis of Mann-Whitney U Test**
+
+Since the data was not normally distributed, the Mann-Whitney U test was appropriate here. Additionally, the two groups for each
+predictor are independent, meaning they are distinct and mutually exclusive (i.e. a student cannot be in both groups simultaneously. S/he
+is necessarily either "Enrolled" or "Not Enrolled" for each semester). The p-values for each predictor are ostensibly zero, which
+indicates that the distributions between the two groups are statistically significantly different at an $\alpha$ level of 0.01. This
+reveals nothing of the practical significance of the differences between the distributions, however; it simply provides more context in
+understanding the data. 
+
+### Categorical Variables
+
+```{r}
+
+#----------------------------------
+# Categorical Variable Exploration
+#----------------------------------
+
+# Create frequency tables with proportions as
+# well as bar plots of the categorical 
+# variables stratified by enrollment
+
+# stype
+table(enrolled_mod$stype, enrolled_mod$enrolled) %>%
+  cbind(prop.table(table(enrolled_mod$stype, enrolled_mod$enrolled), 1)) %>%
+  data.frame() %>%
+  rename('Retained_%' = 'Enrolled.1',
+         'Not_Retained_%' = 'Not.Enrolled.1')
+
+stype_retained <- ggplot(enrolled_mod, aes(x = stype, 
+                    fill = enrolled)) +
+                    geom_bar(position = 'dodge') + 
+                    scale_fill_manual(values = c("#6A5ACD", "#FFD700"), 
+                                      labels = c("Retained", "Not Retained"),
+                                      name = NULL) + 
+                    labs(title = 'Student Type ReEnrollment',
+                         y = 'Headcount',
+                         x = 'Student Type') + 
+                    theme(plot.title = element_text(size = 12),
+                          axis.title.x = element_text(size = 10),
+                          axis.title.y = element_text(size = 10))
+
+# resd
+table(enrolled_mod$resd, enrolled_mod$enrolled) %>%
+  cbind(prop.table(table(enrolled_mod$resd, enrolled_mod$enrolled), 1)) %>%
+  data.frame() %>%
+  rename('Retained_%' = 'Enrolled.1',
+         'Not_Retained_%' = 'Not.Enrolled.1')
+
+resd_retained <- ggplot(enrolled_mod, aes(x = resd, 
+                  fill = enrolled)) +
+                  geom_bar(position = 'dodge') + 
+                  scale_fill_manual(values = c("#6A5ACD", "#FFD700"), 
+                                    labels = c("Retained", "Not Retained"),
+                                    name = NULL) +
+                  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, size = 10),
+                        plot.title = element_text(size = 12),
+                        axis.title.x = element_text(size = 10),
+                        axis.title.y = element_text(size = 10)) + 
+                  labs(title = 'Residency Type ReEnrollment',
+                       y = 'Headcount',
+                       x = 'Residency Type')
+
+# gender
+table(enrolled_mod$gender, enrolled_mod$enrolled) %>%
+  cbind(prop.table(table(enrolled_mod$gender, enrolled_mod$enrolled), 1)) %>%
+  data.frame() %>%
+  rename('Retained_%' = 'Enrolled.1',
+         'Not_Retained_%' = 'Not.Enrolled.1')
+
+gender_retained <-ggplot(enrolled_mod, aes(x = gender, 
+                    fill = enrolled)) +
+                    geom_bar(position = 'dodge') + 
+                    scale_fill_manual(values = c("#6A5ACD", "#FFD700"), 
+                                      labels = c("Retained", "Not Retained"),
+                                      name = NULL) +
+                    labs(title = 'Gender ReEnrollment',
+                         y = 'Headcount',
+                         x = 'Gender') + 
+                    theme(plot.title = element_text(size = 12),
+                          axis.title.x = element_text(size = 10),
+                          axis.title.y = element_text(size = 10))
+
+# ethn_desc
+table(enrolled_mod$ethn_desc, enrolled_mod$enrolled) %>%
+  cbind(prop.table(table(enrolled_mod$ethn_desc, enrolled_mod$enrolled), 1)) %>%
+  data.frame() %>%
+  rename('Retained_%' = 'Enrolled.1',
+         'Not_Retained_%' = 'Not.Enrolled.1')
+
+ethn_retained <- ggplot(enrolled_mod, aes(x = ethn_desc, 
+                    fill = enrolled)) +
+                    geom_bar(position = 'dodge') + 
+                    scale_fill_manual(values = c("#6A5ACD", "#FFD700"), 
+                                      labels = c("Retained", "Not Retained"),
+                                      name = NULL) +
+                    theme(axis.text.x = element_text(angle = 66.5, vjust = 0.5, size = 10),
+                          plot.title = element_text(size = 12),
+                          axis.title.x = element_text(size = 10),
+                          axis.title.y = element_text(size = 10)) +
+                    scale_x_discrete(labels = c('White', 'AI/A', 'Asian', 'Black', 'Hispanic', 
+                                                'Missing', 'Mixed', 'PI/H', 'Undeclared')) + 
+                    labs(title = 'Ethnicity ReEnrollment',
+                         y = 'Headcount',
+                         x = 'Ethnicity')
+
+# academic standing
+table(enrolled_mod$acd_std_desc, enrolled_mod$enrolled) %>%
+  cbind(prop.table(table(enrolled_mod$acd_std_desc, enrolled_mod$enrolled), 1)) %>%
+  data.frame() %>%
+  rename('Retained_%' = 'Enrolled.1',
+         'Not_Retained_%' = 'Not.Enrolled.1')
+
+aca_std_retained <- ggplot(enrolled_mod, aes(x = acd_std_desc, 
+                      fill = enrolled)) +
+                      geom_bar(position = 'dodge') + 
+                      scale_fill_manual(values = c("#6A5ACD", "#FFD700"), 
+                                        labels = c("Retained", "Not Retained"),
+                                        name = NULL) +
+                      theme(axis.text.x = element_text(angle = 45, vjust = 0.5, size = 10),
+                            plot.title = element_text(size = 12),
+                            axis.title.x = element_text(size = 10),
+                            axis.title.y = element_text(size = 10)) + 
+                      labs(title = 'Academic Standing ReEnrollment',
+                           y = 'Headcount',
+                           x = 'Academic Standing')
+
+# fully online
+table(enrolled_mod$fully_online, enrolled_mod$enrolled) %>%
+  cbind(prop.table(table(enrolled_mod$fully_online, enrolled_mod$enrolled), 1)) %>%
+  data.frame() %>%
+  rename('Retained_%' = 'Enrolled.1',
+         'Not_Retained_%' = 'Not.Enrolled.1')
+
+fully_online_retained <- ggplot(enrolled_mod, aes(x = fully_online, 
+                            fill = enrolled)) +
+                            geom_bar(position = 'dodge') + 
+                            scale_fill_manual(values = c("#6A5ACD", "#FFD700"), 
+                                              labels = c("Retained", "Not Retained"),
+                                              name = NULL) +
+                            theme(axis.text.x = element_text(angle = 45, vjust = 0.5, size = 10),
+                                  plot.title = element_text(size = 12),
+                                  axis.title.x = element_text(size = 10),
+                                  axis.title.y = element_text(size = 10)) + 
+                            labs(title = 'Fully Online ReEnrollment',
+                                 y = 'Headcount',
+                                 x = 'Fully Online')
+
+# high school matriculation
+table(enrolled_mod$hs_matriculation, enrolled_mod$enrolled) %>%
+  cbind(prop.table(table(enrolled_mod$hs_matriculation, enrolled_mod$enrolled), 1)) %>%
+  data.frame() %>%
+  rename('Retained_%' = 'Enrolled.1',
+         'Not_Retained_%' = 'Not.Enrolled.1')
+
+hs_matric_retained <- ggplot(enrolled_mod, aes(x = hs_matriculation, 
+                        fill = enrolled)) +
+                        geom_bar(position = 'dodge') + 
+                        scale_fill_manual(values = c("#6A5ACD", "#FFD700"), 
+                                          labels = c("Retained", "Not Retained"),
+                                          name = NULL) +
+                        theme(axis.text.x = element_text(angle = 45, vjust = 0.5, size = 10),
+                              axis.title.x = element_text(size = 10),
+                              axis.title.y = element_text(size = 10),
+                              plot.title = element_text(size = 12)) + 
+                        labs(title = 'Matriculated HS ReEnrollment',
+                             y = 'Headcount',
+                             x = 'HS Matriculated')
+
+barcharts <- ggarrange(stype_retained, resd_retained, gender_retained, ethn_retained, aca_std_retained, 
+                       fully_online_retained, hs_matric_retained,
+                       ncol = 2, nrow = 4)
+
+barcharts
+
+# save image
+#ggsave("barchart.png", barcharts)
+
+```
+
+
+### Chi-Square Tests
+
+The $\chi^2$ test of independence helps to ascertain whether there is a significant association between two separate categorical variables. The $\chi^2$ test is given by:
+
+$$\chi^2 = \sum \frac{(O_{ij}-E_{ij})^2}{E_{ij}}$$
+where $O_{ij}$ represents the frequency of each observation $i$ from each row and each attribute from the $j^{th}$ column, $E_{ij}$
+represents the expected frequency of each observation, $i$, from each row and each attribute from the $j^{th}$ column.
+
+When applied to a binary classifier and a categorical predictor, the test reveals whether the observed distribution of the response
+variable is independent of the predictor under consideration. The null hypothesis is:
+
+$H_0$: The two categorical variables are independent.
+
+while the alternative hypothesis is:
+
+$H_a$: The two categorical variables are statistically significantly associated or dependent.
+
+When the $\alpha$ value is set to 0.05, if the p-value for the $\chi^2$ test is less than that, then the null hypothesis is rejected and
+one can conclude that there is a statistically significant association between the response and the categorical variable it is compared
+to in the test. 
+
+```{r}
+
+# Explore the association between the 
+# categorical variable and the enrollment data 
+# using chi-square test
+
+# stype
+chisq.test(table(enrolled_mod$stype, 
+                 enrolled_mod$enrolled))
+
+# resd
+chisq.test(table(enrolled_mod$resd, 
+                 enrolled_mod$enrolled))
+
+# gender
+chisq.test(table(enrolled_mod$gender, 
+                 enrolled_mod$enrolled))
+
+# ethn_desc
+chisq.test(table(enrolled_mod$ethn_desc, 
+                 enrolled_mod$enrolled))
+
+# acd_std_desc
+chisq.test(table(enrolled_mod$acd_std_desc, 
+                 enrolled_mod$enrolled))
+
+# fully_online
+chisq.test(table(enrolled_mod$fully_online, 
+                 enrolled_mod$enrolled))
+
+# high school matriculation
+chisq.test(table(enrolled_mod$hs_matriculation,
+                 enrolled_mod$enrolled))
+
+```
+
+**Analysis of Pearson Chi-Squared Test**
+
+Without exception, each Pearson Chi-Squared test shows a statistically significant relationship between each categorical predictor and
+the response variable, *enrolled*, as each p-value is below the $\alpha$ value of 0.05. All p-values are less than 0.001.
+
+# Model Generation
+
+This analysis will consider several different models for predicting which students will reenroll and those that will not. Since it is
+more costly to misclassify students who do not reenroll (i.e. have False Positives), the *Specificity* is of utmost importance as well as
+the *Accuracy* of the model. Logistic Regression and Cross Validated Lasso Logistic Regression are applied as well as Support Vector
+Machines (SVM), Random Forest (RF), Gradient Booted Models (GBM), Naive Bayes (NB), Ks-Nearest Neighbors, CART, and XGBoost. These models
+are compared using their Accuracy scores as well as the Specificity to determine which one is best for the task.
+
+## Logistic Regression (LR)
+
+A well known form of regression analysis for binary classification is logistic regression. One of its core assumptions is that the data
+can be separated into roughly equal portions of both outcomes, 1 or 0, True or False, or in the case of this analysis, Enrolled or Not
+Enrolled. The model is predicated on the logistic function, also called the sigmoid function, $\sigma(z)$, and is defined as:
+
+$$\sigma(z) = \frac{1}{1+e^{-z}}$$
+where $z$ is the input of the function and $e$ is the base of the natural logarithm. $z$ is the linear combination of the input features
+$X$ and the model parameters $\beta$, which is given by the following equation:
+
+$$z = \beta_0 + \beta_1X_1 + \beta_2X_2 + \dots + \beta_nX_n$$
+The $\beta_0, \beta1, \dots, \beta_n$ are the model parameters, and $X_1, X_2, \dots X_n$ are the feature values for each observation. 
+
+The logistic function transforms the linear output into a value between 0 and 1, which can be interpreted as the probability $p$ of the
+positive class:
+
+$$p = \sigma(\beta_0 + \beta_1X_1 + \beta_2X_2 + \dots + \beta_nX_n)$$
+The result of this calculation is then used to classify an observation into the positive or negative class via a simple heuristic of
+using a threshold of 0.5. If the predicted probability is greater than 0.5, then the prediction is rounded to 1, and if not, it is
+rounded to 0. To be clear, this threshold is not a fixed number and can be altered by the modeler if the cost of false positives or false
+negatives is of particular import. 
+
+To fit the parameters of $\beta$ to the training dataset, this model *typically* uses a maximum likelihood estimator (MLE) to uncover the
+values of $\beta$ that maximize the likelihood of observing the classification labels ('Enrolled', 'Not Enrolled') given the features $X$
+and parameters $\beta$. 
+
+Using the *enrolled_mod* dataset, run a logistic regression.
+
+```{r}
+
+M1 <- glm(enrolled~. - no_pell, family = binomial(link = 'logit'), data = train.data)
+
+rownames(round(summary(M1)$coeff[,c(1,4)], 6) %>%
+  cbind() %>%
+  data.frame() %>%
+  filter(Pr...z.. <= 0.05) %>%
+  rename('P_Val' = 'Pr...z..'))
+
+summary(M1)
+
+M1_pred <- predict(M1, test.data, type = 'response')
+  
+M1_pred <- ifelse(M1_pred >= 0.5, 'Not Enrolled', 'Enrolled')
+  
+confusionMatrix(table(M1_pred, test.data$enrolled))
+
+#---------------------------------------------------
+# Mccv With LR
+#---------------------------------------------------
+
+B = 20
+
+lr_acc = NULL
+lr_acc_pval = NULL
+lr_spec = NULL
+lr_sens = NULL
+
+for(i in 1:B){
+  
+  training.samples <- enrolled_mod$enrolled %>%
+                     createDataPartition(p = 0.8, list = FALSE)
+
+  train.data <- enrolled_mod[training.samples, ]
+  test.data <- enrolled_mod[-training.samples, ] 
+  
+  lr_model <- glm(enrolled~., family = binomial(link = 'logit'), data = train.data)
+
+  lr_pred <- predict(lr_model, test.data)
+    
+  lr_pred <- ifelse(lr_pred >= 0.5, 'Not Enrolled', 'Enrolled')
+  
+  lr_acc <- rbind(lr_acc, cbind(confusionMatrix(table(lr_pred, test.data$enrolled))[[3]]['Accuracy'][[1]]))
+  lr_acc_pval <- rbind(lr_acc_pval, cbind(confusionMatrix(table(lr_pred, test.data$enrolled))[[3]]['AccuracyPValue'][[1]]))
+  lr_spec <- rbind(lr_spec, cbind(confusionMatrix(table(lr_pred, test.data$enrolled))[[4]]['Specificity'][[1]]))
+  lr_sens <- rbind(lr_sens, cbind(confusionMatrix(table(lr_pred, test.data$enrolled))[[4]]['Sensitivity'][[1]]))
+  
+}
+
+# Output of accuracy, specificity, and accuracy p-value
+rbind(cbind(round(mean(lr_acc), 6), round(var(lr_acc), 6)),
+cbind(round(mean(lr_acc_pval), 6), round(var(lr_acc_pval), 6)),
+cbind(round(mean(lr_spec), 6), round(var(lr_spec), 6)),
+cbind(round(mean(lr_sens), 6), round(var(lr_sens), 6))) %>%
+  data.frame(row.names = c('Accuracy', 'Accuracy_P_Value', 'Specificity', 'Sensitivity')) %>%
+  rename('Avg' = 'X1',
+         'Avg_Var' = 'X2')
+
+
+rescaled_coeff <- data.frame(names = c('inst_earned', 'term_att_crhr', 'term_earn_crhr', 'term_gpa', 'inst_gpa'),
+                             num_coef = c(-0.779593, -0.073003, 0.283548, -0.309177, -0.052242),
+                             sdev = c(sd(enrolled$inst_earned), sd(enrolled$term_att_crhr), sd(enrolled$term_earn_crhr), 
+                                      sd(enrolled$term_gpa), sd(enrolled$inst_gpa))) %>%
+                  mutate(rescaled = num_coef/sdev)
+
+rescaled_coeff 
+
+
+
+```
+
+### Testing the LR Model Significance
+
+```{r}
+
+# Is the model significant at a p-value of 0.01
+1 - pchisq((M1$null.deviance - M1$deviance), 
+                  (M1$df.null - M1$df.residual))
+
+# Odds based on coefficients
+cat('Assuming all other variables are held constant, the odds of a Not From HS ', '\n',
+    'Not Enrolling in the next Fall semester who was enrolled in the previous Fall semester ', '\n',
+    'is ', round(exp(summary(M1)$coeff['hs_matriculationNot From HS',1]) - 1, 6) * 100, '% higher than the reference group.', sep = "")
+
+
+OR <- exp(summary(M1)$coeff['hs_matriculationNot From HS', 1])
+
+# Dispersion parameter
+M1$deviance/M1$df.res
+
+```
+**Analysis of The LR Model Significance**
+
+Based on the $\chi^2$-Test for significance, the LR model is a statistically significant model, meaning it performs better than a naive
+model.  
+
+### Investigating Residuals
+
+```{r}
+
+# Fitted vs residuals plot
+
+plot(M1$fitted.values, M1$residuals,
+     main = 'Fitted vs. Residuals',
+     xlab = 'Fitted Values', 
+     ylab = 'Residuals',
+     pch = 19,
+     cex = 0.8,
+     col = 'blue')
+
+# Pearson Residual Plot
+pears_res <- resid(M1, type = 'pearson')
+
+plot(M1$fitted.values, pears_res,
+     main = 'Fitted vs. Residuals',
+     xlab = 'Fitted Values', 
+     ylab = 'Residuals',
+     pch = 19,
+     cex = 0.8,
+     col = 'blue')
+
+# Deviance Residual Plot vs Fitted Values
+dev_resid <- resid(M1, type = 'deviance')
+
+plot(M1$fitted.values, dev_resid,
+     main = 'Fitted vs. Residuals',
+     xlab = 'Fitted Values', 
+     ylab = 'Residuals',
+     pch = 19,
+     cex = 0.8,
+     col = 'blue')
+
+# Histogram of Deviance Residuals
+hist(dev_resid, 
+     main = "Histogram of Deviance Residuals", 
+     xlab = "Deviance Residuals")
+
+# QQplot of deviance residuals
+qqnorm(dev_resid)
+qqline(dev_resid)
+
+# Leverage and Inflence Points (i.e. outliers)
+M1_cooks <- cooks.distance(M1)
+
+plot(M1_cooks, 
+     main = "Cook's distance plot")
+abline(h = 4/nrow(enrolled),
+       lty = 2,
+       col = 'red',
+       lwd = 2)
+
+# Assess multicollinearity with VIF
+library(car)
+vif(M1)
+
+
+```
+
+**Analysis of VIF and GVIF**
+
+Variance Inflation Factor is used to identify multicollinearity in regression models. The *Generalized VIF* is a variation of VIF for
+predictors that are categorical. The degrees of freedom for categorical variables are the number of categories minus one, while the
+degrees of freedom for continuous predictors is just one. A common rule of thumb is that if the $GVIF^{(\frac{1}{2*Df})}$ is greater than
+2.5 or even 3.0, then *potential* collinearity exists with those variables. Only one of the variables, *all_fafsa*, has a value that
+slightly exceeds 2.5 at 2.511, while the second highest value is 2.351 (*term_earn_crhr*). Nearly every other predictor is below the
+threshold of 2.0. Therefore, it is reasonable to conclude there is not significant multicollinearity among the predictors. 
+
+```{r}
+
+round(summary(M1)$coeff[,c(1,4)], 6) %>%
+  cbind() %>%
+  data.frame() %>%
+  filter(Pr...z.. <= 0.05) %>%
+  rename('P_Val' = 'Pr...z..')
+
+summary(M1)
+
+# Odds based on coefficients
+cat('Assuming all other variables are held constant, the odds of a Not From HS ', '\n',
+    'Not Enrolling in the next Fall semester who was enrolled in the previous Fall semester ', '\n',
+    'is ', round(exp(summary(M1)$coeff['hs_matriculationNot From HS',1]) - 1, 6) * 100, '% higher than the reference group.', sep = "")
+
+# Odds Ratio (OR) result of exponentiating the coeff
+OR <- exp(summary(M1)$coeff['stypeG', 1])
+
+OR - 1
+
+```
+
+
+**Analysis of LR**
+
+The LR model produces an *accuracy rate* of 0.6773 and a *specificity* of 0.8222. In this case, the positive class is "Enrolled," which
+is why the *specificity* is so important. Recall, it is more costly to misclassify a student who does not reenroll from Fall to Fall. A
+strong *specificity*, therefore, is paramount. There is much to be gleaned from the logistic regression equation.
+
+### LR Goodness of Fit Tests
+
+To test whether the logistic regression model is a good fit, two separate tests should be run--the deviance residuals test and the
+Pearson residuals test. Both have the same null hypothesis.
+
+$H_0$: The model *is* a good fit.
+
+$H_a$: The model *is not* a good fit.
+
+This is one of the rare times the researcher is hoping for a large p-value because a large p-value would indicate that the model fits the
+data reasonably well. A small p-value, one under the traditional $\alpha$-value of 0.05, would mean the researcher rejects the null
+hypothesis that the model is a good fit and instead conclude that the model is not a good fit for the data. 
+
+```{r}
+
+#Deviance
+dev <- 1 - pchisq(M1$deviance, M1$df.residual)
+
+#Pearson residuals
+pear_resid <- resid(M1, type = 'pearson')
+pears <- 1 - pchisq(sum(pear_resid^2), M1$df.residual)
+
+```
+
+### Evaluation of Deviance Residuals 
+
+```{r}
+
+dev_res <- resid(M1, type = 'deviance')
+
+par(mfrow = c(1, 2))
+
+qqPlot(dev_res, 
+       main = 'Deviance Residuals',
+       xlab = 'Quantiles',
+       ylab = 'Residuals')
+
+#Histogram
+hist(dev_res, 
+     main = 'Deviance Residuals',
+     xlab = 'Residuals',
+     ylab = 'Frequency',
+     col = 'purple',
+     border = 'gold')
+
+```
+
+
+Both of these tests produce a value above the $\alpha$ threshold of 0.05, which means we fail to reject the null hypothesis and conclude
+that the model *is* a good fit for the data. 
+
+**Student Type Analysis**
+
+Each of the coefficients for the different categories of the student type predictor were identified as statistically significant, meaning
+they are statistically significantly non-zero, at a confidence interval of 95%. Consequently, there is enough evidence to conclude that
+the effects of these categories on the response variable are real and not the result of random chance. 
+
+The reference level in the student type is that of a continuing student. A continuing student is any student who has attended the college
+in any previous semester and is not in high school or a guest student; the previous semester could be several semesters back and does not
+need to be the semester immediately before the current semester.
+
+A guest student enrolls at the college to usually take one or only a handful of classes. This student is non-degree seeking and cannot be
+eligible for Financial Aid. These students still must comply with all prerequisite requirements for classes they wish to take. Guest
+students are 82.79% more likely to not be retained by the next Fall semester than a student who is a continuing student, assuming all
+other variables are held constant.* 
+
+A high school student, on the other hand, is 65.33% more likely to be retained by the next Fall semester compared to a continuing student. 
+
+A new student is 68.94% more likely to be retained by the next Fall semester compared to a continuing student. 
+
+Transfer students have a similar outcome to new students in that they are 64.15% more likely to be retained by the next Fall semester
+compared to a continuing student.
+
+Both new students and transfer students have something in common--it is their first semester at the college. One can surmise that
+students in their first semester at the college have many things going for them. First, they have a clean slate, which means they are not
+on financial aid warning or suspension, no Accounts Receivable holds, and no academic suspension holds. Second, students in their first
+semester at the college tend to be highly motivated and naively optimistic. They have no back story, nothing to prove or disprove their
+hopes for their academic futures. After their first semester, their self-perception is either reified, or they face some unexpected
+challenges that they were unable to fully overcome. Interestingly too, these students, even if they do have a poor first semester, will
+still typically be able to enroll for the following Spring and then Fall. It takes three semesters to go on academic suspension and can
+take about as long to go on financial aid suspension. 
+
+Recall with continuing students, these students will include students who graduate as well as those that are trying to finish their
+degrees. Therefore, *some* of the students who do not reenroll from Fall to Fall have simply graduated. The average student at this
+institution will take about nine credits a semester, which allows for a student to finish about half of their degree from Fall to Spring
+to Summer with 9, 9, and 6 credits, respectively. Importantly, since this model will be ran on students in the Fall, we will not know who
+is going to graduate or apply for graduation. Therefore, we cannot include that in the model.
+
+
+**Gender Analysis**
+
+None of the self-declared genders of the student were found to be statistically significantly non-zero, which means none of them were
+found to have a measurable effect on the likelihood that a student would or would not reenroll from Fall to Fall.
+
+**Ethnicity Analysis**
+
+Only two of the self-declared ethnicity categories were found to be statistically significantly non-zero at an α-level of
+0.05—*Hispanic*, and *Missing.* Recall that in the early stages of data exploration that about six percent of the ethnicity predictor had
+missing values. Consequently, a new category for this predictor was created for these missing values simply called "Missing." In this
+case, it proved to be valuable, which is precisely why one should not just exclude observations with missing values a priori. Each of
+these categories, therefore, have a distinct and measurable effect on the likelihood that a student will reenroll or not in the following
+Fall semester.
+
+The reference group for this categorical predictor is "Caucasian/White." So as not to repeat the phrase for each category, it is
+understood that each of these ethnicity are self-declared by the student.
+
+Students who are Hispanic are 22.60% more likely to be retained from Fall to Fall than White students.
+
+Students who did not declare an ethnicity are 13.90% more likely to be retained than students who are White.
+
+**Residency Analysis**
+
+Not a single residency category was statistically significantly non-zero.
+
+**Academic Standing Analysis**
+
+Each of the *academic standing* categories were found to be statistically significant at an $\alpha$ level of 0.05, which means there is
+good reason to conclude that these categories have real effects on whether a student retains from Fall to Fall or not, and it is not a
+consequence of random chance. 
+
+The reference level for this variable is students who are in "Good Standing" with the college, meaning they have a GPA that is above a
+2.0.
+
+Students who do not have a GPA yet, are 48.59% more likely to not be retained at the college than a student who is in good standing.
+
+Students who are on academic probation at the college are 66.67% more likely to not be retained than students who are in good standing.
+
+Students who are on academic suspension are 40.73% more likely to not be retained than students in good standing.
+
+**Numeric Predictor Analysis**
+
+With the exception of a student's age, all coefficients for the numeric predictors were found to be statistically significantly non-zero.
+For each additional credit hour a student earns at the college (i.e. *inst_earned*), the student is 55.86% more likely to be retained. As
+cautioned before, this is *descriptive* of students and not *prescriptive*. Each additional attempted credit hour per semester makes a
+student only about 6.14% more likely to be enrolled the following semester. For each additional credit hour a student *earns* in a given
+semester, the likelihood of them not enrolling the following Fall *increases* by 36.67%. To some degree, this makes sense because as
+students earn more credit hours, they move closer to graduation, transfer, or both. For each additional point in a student's semester
+GPA, they are 26.90% more likely to be reenrolled the following Fall semester.
+
+**Financial Aid Predictor Analysis**
+
+All categories of the financial aid data were found to be statistically significantly non-zero except the Summer+ program. A student who
+receives pell grants is 18.80% more likely to be retained than a student who receives no scholarships, loans, or grants. A student who
+receives subsidized loans is 21.70% more likely to be retained in the next Fall semester than a student who recieves no grants, loans or
+scholarships. A student who receives unsubsidized loans is 16.31% more likely to be retained in the following Fall semester than a
+student who receives no loans, scholarships, or grants. Kansas Promise scholarship recipients are 44.89% more likely to be enrolled in
+the following Fall semester than a student who receives no loans, scholarships, or grants. Finally, a student is 5.12% more likely to not
+reenroll in the following Fall for each additional loan, scholarship, or grant that s/he receives. The reason why is unclear, as that is
+a counterintuitive finding from this LR model, but nevertheless, it is the case. 
+
+**High School Matriculation Analysis**
+
+For this variable, there were only two categories, students who enrolled in the Fall directly after high school graduation (i.e. "From
+HS") and students who enrolled after one or more semesters after high school graduation (i.e. "Not From HS"). The reference group for
+this predictor is "From HS." Students who are enrolled in a Fall semester and have not enrolled directly after their high school
+graduation the previous May, are 77.36% more likely to not be enrolled the following Fall.
+
+**Fully Online Analysis**
+
+the "fully_online" student coefficient was found to be statistically significantly non-zero. The reference group was students who are not
+fully online. Students who are fully online are 13.27% more likely to not be enrolled the following Fall semester than students who are
+not fully online.
+
+* This phrase "all else held constant" or sometimes more esoterically, *ceteris paribus*, is presumed for all of the analysis for the
+logistic regression.
+
+### Cross Validated Lasso Logistic Regression
+
+The Lasso Regression adds an L1 penalty term that shrinks the coefficients towards zero. It is characterized by the following equation:
+
+$$\lambda\sum_{J=1}^p |\beta_j|$$
+$\lambda$ is the non-negative tuning parameter that, as it increases, more coefficients are lowered to zero. When $\lambda$ is zero, it
+produces the regular maximum likelihood estimates typical for a logistic regression model.
+
+Lasso regression encourages sparsity within the coefficients, ultimately performing variable selection by setting the less influential
+predictors to zero, which is advantageous when the dataset has high dimensionality. Consequently, it aids in the prevention of
+overfitting.
+
+```{r}
+
+# Lasso Logistic Regression
+
+x <- as.matrix(train.data[, !colnames(train.data) %in% 'enrolled'])
+y <- train.data$enrolled
+
+# Use cross validation
+cv_lasso <- cv.glmnet(x, y, family = 'binomial', alpha = 1)
+
+# View coefficients of CV for minimum lambda
+coef(cv_lasso, s = cv_lasso$lambda.min)
+
+# View plot of model
+plot(cv_lasso)
+
+# Create test matrix
+test_matrix <- as.matrix(test.data[, !colnames(test.data) %in% 'enrolled'])
+
+# make prediction of probabilities with lambda.min
+cv_lasso_pred <- predict(cv_lasso, newx = test_matrix, s = cv_lasso$lambda.min, type = 'response')
+
+# convert classes back to string format
+cv_lasso_classes <- ifelse(cv_lasso_pred > 0.5, 'Not Enrolled', 'Enrolled')
+
+# view confusion matrix
+confusionMatrix(as.factor(cv_lasso_classes), test.data$enrolled)
+
+# see the distribution of enrolled, not enrolled from the 
+# prediction
+table(test.data$enrolled)
+
+#------------------------------------------------------------------
+# Loop for coefficient of age
+#------------------------------------------------------------------
+
+cv_coeff <- data.frame('Age' = integer(), 'Likelihood' = numeric())
+
+# Loop through values of 18 to 50
+for (i in seq(18, 50, 1)) {
+  
+  # Store mean and stdev of age
+  mu = 23.11345
+  sdev = 7.592062
+  coeff = 0.20385907
+  
+  # Calculate based on coeff from CV-LLR model for age
+  calculation <- exp(((i - mu) / sdev) * coeff) - 1
+  
+  # Append the results to the dataframe
+  cv_coeff <- rbind(cv_coeff, data.frame('Age' = i, 'Likelihood' = calculation))
+  
+}
+
+cv_coeff
+
+# Plot of age against likelihood of being enrolled the following Fall
+
+ggplot(cv_coeff, aes(x = Age, y = Likelihood)) + 
+  geom_line(color = '#0000FF80',
+            lwd = 1.2) + 
+  labs(x = 'Age',
+       y = 'Likelihood',
+       title = 'Likelihood of Student Not Being Enrolled') +
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+#ggsave('CV-LLR_Age_Chart.png', cv_age, width = 6, height = 4, units = 'in')
+
+
+```
+
+**Analysis**
+
+The CV Lasso LR identified *age*, *inst_earned*, *term_att_crhr*, *term_earn_crhr*, *term_gpa*, *no_pell*, *pell*, *subsidized*,
+*unsubsidized*, *summer_plus*, *kansas_promise*, and *all_fafsa* as the most influential predictors for the model. This model produced an
+accuracy score of 0.6294 and a specificity of 0.7863.  
+
+## SVM
+
+*Do NOT RUN THIS WITHOUT A LOT OF TIME SET ASIDE. THIS TAKES MULTIPLE HOURS TO RUN. TRIED RUNNING IT ON 11.7.23 AND IT JUST RAN AND RAN*
+*AND RAN FOR SEVERAL HOURS WITHOUT MAKING ANY HEADWAY. I DISCOVERED THAT WHEN THE PARAMETER IN trainControl(), 'classprobs', IS SET TO*
+*TRUE (THE DEFAULT IS FALSE), THAT THE SVM IS THEN RUNNING ONE MODEL TO IDENTIFY CLASSES AND THE OTHER TO IDENTIFY THE PROBABILITY THAT*
+*THE OBSERVATION IS ONE OF THE CLASSES. THIS MAKES THE RUN TIME AT LEAST DOUBLE. SVM IS SO COMPUTATIONALLY EXPENSIVE, IT WOULD HAVE TO* 
+*FAR OUTPERFORM THE GBM AND XGBOOST MODELS FOR ME TO GO WITH IT. AT PRESENT, ITS SPECIFICITY IS UP THERE WITH THE CART MODEL AND WITH A* 
+*BETTER ACCURACY. THE PROBLEM IS HOW LONG IT TAKES TO RUN. IF I WERE TO TRY TO KNIT THIS FILE WITH THE SVM, IT WOULD TAKE THROUGH THE* 
+*NIGHT AND I WOULD GET ONE CHANCE PER DAY FOR IT TO BE EXACTLY RIGHT.*
+
+```{r}
+
+ctrl <- trainControl(method = 'cv', number = 10)
+
+# Tran SVM
+
+svm_rbf_model <- train(as.factor(make.names(enrolled))~.,
+                       data = train.data,
+                       method = 'svmRadial',
+                       trControl = ctrl)
+
+# Make prediction
+svm_pred <- predict(svm_rbf_model, newdata = test.data)
+
+svm_pred <- ifelse(svm_pred == 'Not.Enrolled', 'Not Enrolled', 'Enrolled')
+
+confusionMatrix(as.factor(svm_pred), test.data$enrolled)
+
+```
+
+## Random Forest Model
+
+```{r}
+
+# MCCV with RF
+#B = 20
+
+#rf_acc= NULL
+#rf_acc_pval = NULL
+#rf_spec = NULL
+
+#for(i in 1:B){
+  
+#  training.samples <- enrolled_mod$enrolled %>%
+#                        createDataPartition(p = 0.8, list = FALSE)
+  
+#  train.data <- enrolled_mod[training.samples, ]
+#  test.data <- enrolled_mod[-training.samples, ]
+  
+#  rf_model <- randomForest(enrolled~., data = train.data, ntree = 500)
+  
+#  rf_pred <- predict(rf_model, newdata = test.data)
+  
+#  rf_acc <- rbind(rf_acc, cbind(confusionMatrix(rf_pred, test.data$enrolled)[[3]]['Accuracy'][[1]]))
+  
+#  rf_acc_pval <- rbind(rf_acc_pval, cbind(confusionMatrix(rf_pred, test.data$enrolled)[[3]]['AccuracyPValue'][[1]]))
+  
+#  rf_spec <- rbind(rf_spec, cbind(confusionMatrix(rf_pred, test.data$enrolled)[[4]]['Specificity'][[1]]))
+  
+#}
+
+# Create dataframe to view the rf_acc, rf_acc_pval, and rf_spec from the MCCV
+#rbind(cbind(round(mean(rf_acc), 6), round(var(rf_acc), 6)),
+#      cbind(round(mean(rf_acc_pval), 6), round(var(rf_acc_pval), 6)),
+#      cbind(round(mean(rf_spec), 6), round(var(rf_spec), 6))) %>%
+#  data.frame(row.names = c('Accuracy', 'Accuracy_P_Value', 'Specificity')) %>%
+#  rename('Avg' = 'X1',
+#         'Avg_Var' = 'X2')
+
+# Make model outside of MCCV      
+rf_model <- randomForest(enrolled~., data = train.data, ntree = 500, importance = TRUE)
+
+# Make prediction with model
+rf_pred <- predict(rf_model, newdata = test.data)
+
+# View CM
+confusionMatrix(rf_pred, test.data$enrolled)
+
+#---------------------------------------
+# Create important features plot
+#---------------------------------------
+
+# Extract the feature importance
+rf_imp <- importance(rf_model) %>%
+            data.frame()
+
+# Add the variable names as a column
+rf_imp$Variable <- rownames(rf_imp)
+
+rownames(rf_imp) <- NULL
+
+rf_imp <- rf_imp[,c('Variable', 'Enrolled', 'Not.Enrolled', 'MeanDecreaseAccuracy', 'MeanDecreaseGini')]
+
+# Convert to percentage of total
+rf_imp$MeanDecreaseAccuracy <- (rf_imp$MeanDecreaseAccuracy / sum(rf_imp$MeanDecreaseAccuracy)) * 100
+
+rf_imp <- rf_imp %>%
+            arrange(desc(MeanDecreaseAccuracy))
+
+# Add running percentage
+rf_imp$Running_Perc <- cumsum(rf_imp$MeanDecreaseAccuracy)
+
+rf_imp 
+
+# Make Plot
+ggplot(rf_imp, aes(x = reorder(Variable, MeanDecreaseAccuracy), y = MeanDecreaseAccuracy)) +
+  geom_segment(aes(xend = Variable, yend = 0), color = 'dodgerblue') + 
+  geom_point(color = 'darkorange',
+             size = 4) +
+  coord_flip() +
+  xlab('Variable') +
+  ylab('Percentage Contribution (%)') +
+  ggtitle('Variable Importance of RF')
+
+
+```
+
+```{r}
+
+# Calculate the testing error
+test_error <- mean(rf_pred != test.data$enrolled)
+cat('The Test Error is: ', round(test_error, 4), sep = '')
+
+# Remove the error rates for the RF model
+error_rate <- rf_model$err.rate[,1]
+
+# Create dataframe with errors
+error_df <- data.frame(Trees = 1:length(error_rate),
+                       Test_Error = error_rate)
+
+# Plot errors vs trees
+rf_test_error <- ggplot(error_df, aes(x = Trees, y = Test_Error)) + 
+                  geom_line(col = 'dodgerblue') + 
+                  geom_vline(xintercept = which.min(error_df$Test_Error),
+                             color = 'red',
+                             linetype = 'dashed') + 
+                  ggtitle('Test Error vs Number of Trees') + 
+                  xlab('Number of Trees') + 
+                  ylab('Test Error') + 
+                  annotate('text',
+                           x = which.min(error_df$Test_Error) - 100,
+                           y = min(error_df$Test_Error),
+                           vjust = -1.5,
+                           label = paste('Minimum Error = ',
+                                         round(min(error_df$Test_Error), 4)))
+
+rf_test_error
+
+error_df[which(error_df$Test_Error == min(error_df$Test_Error)),]
+
+# save image
+#ggsave("rf_test_error.png", rf_test_error, width = 6, height = 4, units = 'in')
+
+```
+
+## Gradient Boosted Model
+
+```{r}
+
+library(gbm)
+
+# Make GBM 
+gbm_model <- train(as.factor(make.names(enrolled))~.,
+                   data = train.data,
+                   method = 'gbm',
+                   trControl = ctrl,
+                   verbose = F)
+
+# Make prediction with GBM
+gbm_model_pred <- predict(gbm_model, newdata = test.data)
+
+# Convert GBM predictions into appropriate format
+gbm_model_pred <- ifelse(gbm_model_pred == 'Not.Enrolled', 'Not Enrolled', 'Enrolled')
+
+# View confusion matrix of GBM
+confusionMatrix(as.factor(gbm_model_pred), test.data$enrolled)
+
+# View variable importance 
+gbm_var_imp <- varImp(gbm_model, scale = FALSE)$importance
+
+# Normalize data
+gbm_var_imp$Normalized <- gbm_var_imp$Overall / sum(gbm_var_imp$Overall) * 100
+
+# Plot the normalized scores and extract top 10
+top_10 <- gbm_var_imp %>% 
+            arrange(-Normalized) %>% 
+            head(10)
+
+# Rename rownames
+top_10$Variable <- rownames(top_10)
+
+rownames(top_10) <- NULL
+
+# Add cumulative sum to the data
+top_10$Running_Perc <- cumsum(top_10$Normalized)
+
+# Reorder columns
+top_10 <- top_10[, c('Variable', 'Overall', 'Normalized', 'Running_Perc')]
+
+top_10
+
+# Plot data
+ggplot(top_10, aes(x = reorder(Variable, Normalized), y = Normalized)) +
+  geom_segment(aes(xend = Variable, yend = 0), color = 'dodgerblue') + 
+  geom_point(color = 'darkorange',
+             size = 4) +
+  coord_flip() +
+  labs(title = "Most Important Variables for GBM",
+       x = "Variable",
+       y = "Percentage Contribution (%)")
+
+
+# save image
+#ggsave("gbm_importance_plot.png", gbm_importance_plot, width = 6, height = 4, units = 'in')
+
+```
+
+
+## Naive Bayes Model
+
+The Naive Bayes performed poorly from the start. Therefore, in order to ascertain whether this was a one-off performance or if it was 
+durable, a Monte Carlo Cross Validation was used to test what the mean accuracy, accuracy p-value, and specificity was over 100 runs.
+
+```{r}
+
+library(e1071)
+
+# Conduct MCCV on Naive Bayes 
+B = 100
+
+# Make bins to store results
+acc = NULL
+acc_pval = NULL
+spec = NULL
+
+# Run MCCV for the NB model
+for(i in 1:B){
+  
+  training.samples <- enrolled_mod$enrolled %>%
+                     createDataPartition(p = 0.8, list = FALSE)
+  
+  train.data <- enrolled_mod[training.samples, ]
+  test.data <- enrolled_mod[-training.samples, ] 
+  
+  nb_model <- naiveBayes(enrolled~., data = train.data)
+
+  nb_model_pred <- predict(nb_model, newdata = test.data)
+  
+  acc = rbind(acc, cbind(confusionMatrix(nb_model_pred, test.data$enrolled)[[3]]['Accuracy'][[1]]))
+  acc_pval = rbind(acc_pval, cbind(confusionMatrix(nb_model_pred, test.data$enrolled)[[3]]['AccuracyPValue'][[1]]))
+  spec = rbind(spec, cbind(confusionMatrix(nb_model_pred, test.data$enrolled)[[4]]['Specificity'][[1]]))
+  
+}
+
+# Make dataframe for accuracy
+acc_df <- round(apply(acc, 2, mean),4) %>%
+              cbind(round(apply(acc, 2, var),10)) %>%
+              data.frame() %>%
+              rename('Avg' = '.',
+                     'Avg var' = 'V2')
+
+# Make dataframe for accuracy p-value
+acc_pval_df <- round(apply(acc_pval, 2, mean),4) %>%
+                cbind(round(apply(acc_pval, 2, var),10)) %>%
+                data.frame() %>%
+                rename('Avg' = '.',
+                       'Avg var' = 'V2')
+
+# Make dataframe for specificity
+spec_df <- round(apply(spec, 2, mean),4) %>%
+                cbind(round(apply(spec, 2, var),10)) %>%
+                data.frame() %>%
+                rename('Avg' = '.',
+                       'Avg var' = 'V2')
+
+# Combine all results and name rows
+combined_df <- acc_df %>%
+                rbind(acc_pval_df, spec_df)
+
+row.names(combined_df) <- c('accuracy', 'accuracy_p_val', 'specificity')
+
+# view dataframe
+combined_df
+
+```
+
+
+**NB Analysis**
+
+The NB Classifier combined with MCCV shows an average accuracy score over 100 trials of 0.6101, each time with a accuracy p-value lower 
+than an $\alpha$ value of 0.05, meaning it is statistically significantly better than just guessing, but  not by much. The *specificity*,
+which is a measurement I really care about since it is more costly to misclassify students who are not going to retain from  Fall to Fall
+than to correctly predict who is going to retain from Fall to Fall, is only 0.5385. By both metrics, NB performs only slightly better
+than logistic regression.
+
+## KNN
+
+*KNN is another one that takes a bit of time to run. Therefore, make sure you're prepared for that before you run it.*
+
+```{r}
+
+# FIt KNN Model
+knn_model <- train(as.factor(make.names(enrolled))~.,
+                   data = train.data,
+                   method = 'knn',
+                   trControl = ctrl,
+                   tuneGrid = expand.grid(.k = 1:50))
+
+# Plot K's against their accuracy
+plot(knn_model$results$k, 
+     knn_model$results$Accuracy,
+     type = 'b',
+     main = 'Accuracy of K Values',
+     xlab = 'Value of K',
+     ylab = 'Accuracy',
+     col = 'blue',
+     pch = 19,
+     cex = 0.8)
+abline(v = knn_model$bestTune$k,
+       col = 'red',
+       lty = 2)
+mtext(side = 3, 
+      text = paste('Best K Value = ', knn_model$bestTune$k), 
+      at = knn_model$bestTune$k, 
+      adj = 1.2, 
+      line = -5)
+
+# Make prediction using best knn model
+knn_pred <- predict(knn_model, test.data)
+
+# Convert precictions to appropriate structure
+knn_pred <- ifelse(knn_pred == 'Not.Enrolled', 'Not Enrolled', 'Enrolled')
+
+# View confusion matrix of KNN model
+confusionMatrix(as.factor(knn_pred), test.data$enrolled)
+
+```
+
+## CART
+
+```{r}
+
+library(rpart)
+library(rpart.plot)
+
+B = 100
+
+# Make bins to store results
+acc_cart = NULL
+acc_pval_cart = NULL
+spec_cart = NULL
+
+# Run MCCV for the CART model
+for(i in 1:B){
+  
+  training.samples <- enrolled_mod$enrolled %>%
+                     createDataPartition(p = 0.8, list = FALSE)
+  
+  train.data <- enrolled_mod[training.samples, ]
+  test.data <- enrolled_mod[-training.samples, ] 
+  
+    # Make CART Model
+  cart_model <- rpart(enrolled~.,
+                      data = train.data,
+                      method = 'class')
+  
+  # Make prediction with CART model
+  cart_model_pred <- predict(cart_model, test.data, type = 'class')
+  
+  acc_cart = rbind(acc_cart, cbind(confusionMatrix(cart_model_pred, test.data$enrolled)[[3]]['Accuracy'][[1]]))
+  acc_pval_cart = rbind(acc_pval_cart, cbind(confusionMatrix(cart_model_pred, test.data$enrolled)[[3]]['AccuracyPValue'][[1]]))
+  spec_cart = rbind(spec_cart, cbind(confusionMatrix(cart_model_pred, test.data$enrolled)[[4]]['Specificity'][[1]]))
+  
+}
+
+
+# Make CART Model
+cart_model <- rpart(enrolled~.,
+                    data = train.data,
+                    method = 'class')
+
+# Make prediction with CART model
+cart_model_pred <- predict(cart_model, test.data, type = 'class')
+
+# View confusion matrix
+confusionMatrix(cart_model_pred, test.data$enrolled)
+
+# Open PNG
+#png(file = 'cart_model_plot.png', width = 1024, height = 768)
+
+# Plot the model
+rpart.plot(cart_model,
+           main = 'CART Model For Fall to Fall Retention')
+
+# Turn off device to save file
+#dev.off()
+
+# Extract importance features
+cart_importance <- sort(cart_model$variable.importance, decreasing = TRUE)
+
+cart_importance <- cart_importance / sum(cart_importance) * 100
+
+# make dataframe with importance numbers
+cart_importance_df <- data.frame(Variable = names(cart_importance),
+                                 Importance = cart_importance)
+# remove index
+rownames(cart_importance_df) <- NULL
+
+# Add cumulative sum to dataframe
+cart_importance_df$Running_Percent <- cumsum(cart_importance_df$Importance)
+
+# create lollipop chart
+ggplot(cart_importance_df, aes(x = reorder(Variable, Importance), y = Importance)) + 
+  geom_segment(aes(xend = Variable, yend = 0), color = 'dodgerblue') + 
+  geom_point(color = 'darkorange',
+             size = 4) + 
+  coord_flip() +
+  labs(title = 'CART Variable Importance',
+       x = 'Variable',
+       y = 'Importance')
+
+```
+
+**The CART model had to be redone with the original numeric values. CARTs do well with unscaled values, handle outliers well, and handle
+categorical variables well. I still used the same train/test split by using the training.samples from the original.**
+
+```{r}
+
+# Select rows to be used
+enrolled_cart <- as.data.frame(enrolled[ ,c('enrolled', 'stype', 'gender', 'ethn_desc', 'resd', 'acd_std_desc', 'fully_online', 'age', 'inst_earned', 'term_att_crhr', 'term_earn_crhr', 'term_gpa', 'inst_gpa', "no_pell", "pell", "subsidized", "unsubsidized", "summer_plus", "kansas_promise", "all_fafsa", 'hs_matriculation')])
+
+numeric <- c('age', 'inst_earned', 'term_att_crhr', 'term_earn_crhr', 'term_gpa', 'inst_gpa')
+categorical <- c('enrolled', 'stype', 'gender', 'ethn_desc', 'resd', 'acd_std_desc', 'fully_online', 'hs_matriculation')
+
+# Exclude the "DO NOT USE" students from the ethn_desc (11 students)
+enrolled_cart <- enrolled_cart[which(enrolled_cart$ethn_desc != 'DO NOT USE - Hispanic'), ]
+
+# One student had a 'Z' residency type
+enrolled_cart <- enrolled_cart[which(enrolled_cart$resd != 'Z'), ]
+
+# Three students had an age that was obvious incorrect because their age was two years old or less.
+enrolled_cart <- enrolled_cart[which(enrolled_cart$age >= 13), ]
+
+# Fill NA values in hs_matriculation with "Not From HS"
+enrolled_cart <- enrolled_cart %>%
+                   mutate(hs_matriculation = if_else(is.na(hs_matriculation), 'Not From HS', hs_matriculation))
+
+cart.train.data <- enrolled_cart[training.samples, ]
+cart.test.data <- enrolled_cart[-training.samples, ] 
+
+# Make CART Model
+cart_model <- rpart(enrolled~.,
+                    data = cart.train.data,
+                    method = 'class')
+
+# Make prediction with CART model
+cart_model_pred <- predict(cart_model, cart.test.data, type = 'class')
+
+# View confusion matrix
+confusionMatrix(as.factor(cart_model_pred), as.factor(cart.test.data$enrolled))
+
+# Open PNG
+#png(file = 'cart_model_plot.png', width = 1024, height = 768)
+
+# Plot the model
+rpart.plot(cart_model,
+           main = 'CART Model For Fall to Fall Retention')
+
+# Turn off device to save file
+#dev.off()
+
+# Extract importance features
+cart_importance <- sort(cart_model$variable.importance, decreasing = TRUE)
+
+cart_importance <- cart_importance / sum(cart_importance) * 100
+
+# make dataframe with importance numbers
+cart_importance_df <- data.frame(Variable = names(cart_importance),
+                                 Importance = cart_importance)
+# remove index
+rownames(cart_importance_df) <- NULL
+
+# Add cumulative sum to dataframe
+cart_importance_df$Running_Percent <- cumsum(cart_importance_df$Importance)
+
+cart_importance_df
+
+# create lollipop chart
+ggplot(cart_importance_df, aes(x = reorder(Variable, Importance), y = Importance)) + 
+  geom_segment(aes(xend = Variable, yend = 0), color = 'dodgerblue') + 
+  geom_point(color = 'darkorange',
+             size = 4) + 
+  coord_flip() +
+  labs(title = 'CART Variable Importance',
+       x = 'Variable',
+       y = 'Importance')
+
+# Save CART Lollipop Chart
+#ggsave('cart_importance.png', cart_importance, width = 6, height = 4, units = 'in')
+```
+
+## Neural Network (NN)
+
+```{r}
+
+library(nnet)
+
+nn_model <- nnet(enrolled~., data = train.data, size = 20, maxit = 100, linout = F)
+
+nn_pred <- predict(nn_model, newdata = test.data, type = 'class')
+
+confusionMatrix(as.factor(nn_pred), test.data$enrolled)
+
+#-------------------------------------------------------
+# Try a grid search with the NN
+#-------------------------------------------------------
+
+# Generate grid of hyperparamters
+hidden_layer_sizes <- c(3, 5, 10, 15, 20)
+max_iterations <- c(100, 150, 200, 250, 300)
+
+# Initialize variables
+best_size <- NULL
+best_maxit <- NULL
+best_accuracy <- 0
+
+# Loop through all combinations
+for (size in hidden_layer_sizes) {
+  for (maxit in max_iterations) {
+    
+    # Train the model
+    nn_model <- nnet(enrolled~., data = train.data, size = size, maxit = maxit)
+    
+    # Evaluate the model
+    predictions <- predict(nn_model, newdata = test.data, type = 'class')
+    accuracy <- sum(predictions == test.data$enrolled) / nrow(test.data)
+    
+    # Update parameters if current model is better
+    if (accuracy > best_accuracy) {
+      best_size <- size
+      best_maxit <- maxit
+      best_accuracy <- accuracy
+    }
+  }
+}
+
+# View best hyperparameters
+best_size
+best_maxit
+best_accuracy
+
+confusionMatrix(as.factor(nn_pred), test.data$enrolled)
+
+```
+
+# Linear model of enrolled students
+
+```{r}
+
+train.data2 = cart.train.data[, c('enrolled', 'stype', 'gender', 'ethn_desc', 'resd', 'acd_std_desc', 'fully_online', 'age', 
+                             'inst_earned', 'term_att_crhr', 'term_earn_crhr', 'term_gpa', 'inst_gpa', 'no_pell', 'pell', 'subsidized', 'unsubsidized', 'summer_plus', 'kansas_promise', 'all_fafsa', 'hs_matriculation')]
+  
+test.data2 = cart.test.data[, c('enrolled', 'stype', 'gender', 'ethn_desc', 'resd', 'acd_std_desc', 'fully_online', 'age', 
+                             'inst_earned', 'term_att_crhr', 'term_earn_crhr', 'term_gpa', 'inst_gpa', 'no_pell', 'pell', 'subsidized', 'unsubsidized', 'summer_plus', 'kansas_promise', 'all_fafsa', 'hs_matriculation')]
+
+# Isolate only enrolled students
+train.data2 <- train.data2[which(train.data2$enrolled == 'Enrolled'), ]
+test.data2 <- test.data2[which(test.data2$enrolled == 'Enrolled'), ]
+train.data2
+
+train.data2 <- train.data2[, c('stype', 'gender', 'ethn_desc', 'resd', 'acd_std_desc', 'fully_online', 'age', 
+                               'inst_earned', 'term_att_crhr', 'term_earn_crhr', 'term_gpa', 'inst_gpa', 'no_pell', 'pell', 'subsidized',
+                               'unsubsidized', 'summer_plus', 'kansas_promise', 'all_fafsa', 'hs_matriculation')]
+
+test.data2 <- test.data2[, c('stype', 'gender', 'ethn_desc', 'resd', 'acd_std_desc', 'fully_online', 'age', 
+                             'inst_earned', 'term_att_crhr', 'term_earn_crhr', 'term_gpa', 'inst_gpa', 'no_pell', 'pell', 'subsidized',
+                             'unsubsidized', 'summer_plus', 'kansas_promise', 'all_fafsa', 'hs_matriculation')]
+
+# Convert factors to dummy variables using model.matrix
+train.data_dummy <- model.matrix(~ stype + gender + ethn_desc + resd + acd_std_desc + fully_online + hs_matriculation - 1, data = train.data2)
+
+test.data_dummy <- model.matrix(~ stype + gender + ethn_desc + resd + acd_std_desc + fully_online + hs_matriculation - 1, data = test.data2)
+
+# Convert the matrix back to a dataframe
+train.data_dummy <- as.data.frame(train.data_dummy)
+test.data_dummy <- as.data.frame(test.data_dummy)
+
+train.data2 <- train.data2[,c(7:ncol(train.data2))] %>% 
+                cbind(train.data_dummy)
+test.data2 <- test.data2[,c(7:ncol(test.data2))] %>% 
+                cbind(test.data_dummy)
+
+m2 <- lm(term_att_crhr~., data = train.data2)
+
+summary(m2)
+
+```
+
