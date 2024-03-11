@@ -568,11 +568,13 @@ h0m4: count ~ 1 + (1 + depth * temperature | species)
 
 **Analysis**
 
-In the hypothetical scenario here, the fifth null model, *h0m5*, had the most
-improvement, as seen by the Bayes Information Criterion (BIC) and the improvement of
-the p-value. The goal is to show how I would evaluate the null models. Remember, the
-null models are wholely dependent upon your understanding of your data. There is not
-a "right" answer, per se. 
+In the hypothetical scenario here, the fifth null model, *h0m5*, had the most improvement, 
+as seen by the improvement of Bayes Information Criterion (BIC), Akaike Information 
+Criterion (AIC), and the p-value. While h0m5 is the best in the absolute sense with the BIC and AIC,
+it is important to recognize that the h0m2 had dramatic improvement over h0m3 and h0m1 as well. h0m5 
+just had the *best* performance with the evaluation criteria we are using. The goal is to show how 
+I would evaluate the null models. Remember, the null models are wholely dependent upon your 
+understanding of your data. There is not a "right" answer, per se. 
 
 ### Fit Mixed Effects Model
 
