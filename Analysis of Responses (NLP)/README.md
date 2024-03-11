@@ -32,7 +32,7 @@ This analysis digs a little deeper as TF-IDF helps identify themes and topics re
 
 ## Latent Dirichlet Allocation Model (LDA)
 
-This model is an unsupervised learning algorithm that helps identify topics present across the corpus. IF responses to certain question categories consistently cluster around unrelated topics, it might be an indication that the question is not well understood. This model is more robust as it calculates a coherence score to determine the semantic similarity between high scoring words within each question category, which provides a metric for understanding how important and interpretable certain topics are. Here also, the number of topics before the max coherency score is attained might inform us about how well understood a question category is. If the max coherency score occurs after three clusters of topics, it might be an indication that the qeustion is not well understood. 
+This model is an unsupervised learning algorithm that helps identify topics present across the corpus. If responses to certain question categories consistently cluster around unrelated topics, it might be an indication that the question is not well understood. This model is more robust as it calculates a coherence score to determine the semantic similarity between high scoring words within each question category, which provides a metric for understanding how important and interpretable certain topics are. Here also, the number of topics before the max coherency score is attained might inform us about how well understood a question category is. If the max coherency score occurs after three clusters of topics, it might be an indication that the qeustion is not well understood. 
 
 # Results
 
