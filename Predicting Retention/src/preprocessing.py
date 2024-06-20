@@ -4,8 +4,6 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 import fire
-from sklearn.pipeline import make_pipeline, Pipeline
-from sklearn.preprocessing import FunctionTransformer
 
 from src.paths import DATA_DIR
 from src.logger import get_console_logger
