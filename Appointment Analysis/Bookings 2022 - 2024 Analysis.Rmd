@@ -70,7 +70,7 @@ set.seed(101)
 options(scipen = '0')
 
 # set working directory
-setwd('C:/Users/aslemp/Desktop/pandas/Butler Programming/Bookings Analysis/')
+setwd(WORKING_DIR)
 
 # Load libraries
   
