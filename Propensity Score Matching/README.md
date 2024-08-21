@@ -1,9 +1,4 @@
-<div style="text-align: center;">
-  
 # Executive Summary
-  
-</div>
-<br><br>
 
 ********
 
