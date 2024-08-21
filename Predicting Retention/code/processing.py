@@ -25,7 +25,6 @@ def find_enrolled(prev_term, curr_term, sem_0, sem_1):
     # filling the NaN values with 'Not Enrolled'
     prev_curr = (prev_term.merge(curr_term[['id', 'enrolled']], how = 'left', on = 'id')
                          .fillna('Not Enrolled')
-                         .infer_objects(copy=False)
                          .reset_index(drop = True)
                 )
 
