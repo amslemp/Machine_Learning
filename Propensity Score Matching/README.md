@@ -4,7 +4,9 @@
 
 **Side Note**
 
-The PDF shared here is the report turned into the Dean and Faculty member over the course that was analyzed. They are the audience. Since this report was written for academics, the length and depth of the report is more extensive because that is what is appropriate in this academic setting. When I do analysis for others who are not looking for this level of analysis, the reports are much more brief and less technical. Moreover, when my work does not involve a causal analysis like this but rather is a ML model for deployment, usually I am the only one interested in the technical metrics. My end users simply want the model to work and be accurate in its recommendations or predictions.
+The PDF shared here is the report turned into the Dean and Faculty member over the course that was analyzed. They are the audience. Since this report was written for academics, the length and depth of the report is more extensive because that is what is appropriate in this academic setting. Nevertheless, this report was written for people who are not data scientists; consequently, there are descriptions of processes or mathematics that any data scientist would already know and may seem  superfluous, but they are necessary for the audience. 
+
+When I do analysis for others who are not looking for this level of analysis, the reports are much more brief and less technical. Moreover, when my work does not involve a causal analysis like this but rather is a ML model for deployment, usually I am the only one interested in the technical metrics. My end users simply want the model to work and be accurate in its recommendations or predictions.
 
 ********
 
