@@ -1,6 +1,8 @@
-<center>
+<div style="text-align: center;">
+  
 # Executive Summary
-</center>
+  
+</div>
 <br><br>
 
 **Side Note**
