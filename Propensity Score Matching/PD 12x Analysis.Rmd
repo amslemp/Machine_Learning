@@ -1,0 +1,696 @@
+# Propensity Score Matching
+
+
+```{r include = F, echo = F}
+
+# clear objects
+rm(list = ls())
+
+# for reproducability
+set.seed(101)
+
+# Set to non-scientific notation
+options(scipen = '0')
+
+# set working directory
+setwd('C:/Users/aslemp/Desktop/pandas/Butler Programming/PD Course Analysis/')
+
+# Load libraries
+  
+library(tidyverse)
+library(ggplot2)
+library(glmnet)
+library(caret)
+library(ggpubr)
+library(e1071)
+library(pROC)
+library(MASS)
+library(MatchIt)
+library(cobalt)
+library(ggpubr)
+library(caret)
+
+crhr_grades <- read_csv('Crhr_Grades 2019 - 2023.csv')
+
+dim(crhr_grades)
+```
+
+## Exploratory Data Analysis
+
+First, check for missing values.
+
+```{r include = F}
+
+missing_vals <- sapply(crhr_grades, function(x) sum(is.na(x)))
+
+((missing_vals %>%
+  cbind() %>%
+  data.frame())/60400) * 100
+
+# Age range is missing 24 values, which is 0.039% of all values, so we will remove those
+crhr_grades <- crhr_grades[complete.cases(crhr_grades$age_range),]
+
+# Gender is missing only 5 entries. We will remove those rows as well as it is only 0.008% of all rows
+crhr_grades <- crhr_grades[complete.cases(crhr_grades$gender), ]
+
+# Ethnicity is missing 4.34% of all values. I will impute a new category in their called 'missing'
+crhr_grades[!complete.cases(crhr_grades$ethn_desc), ]['ethn_desc'] <- 'Missing'
+
+# trmattmpt is missing 0.0017% of all values. I will eliminate those rows
+crhr_grades <- crhr_grades[complete.cases(crhr_grades$trmattmpt), ]
+
+# Check again to see which columns have missing values
+missing_vals <- sapply(crhr_grades, function(x) sum(is.na(x)))
+
+((missing_vals %>%
+  cbind() %>%
+  data.frame())/60400) * 100
+
+```
+
+### Correlation Matrix
+
+```{r}
+
+library(corrplot)
+
+# Select numeric columns
+numeric_cols <- select_if(crhr_grades, is.numeric)
+
+# Compute the correlation matrix
+corr_matrix <- cor(numeric_cols, 
+                   use = 'complete.obs')
+
+# visualize correlation matrix
+corrplot(corr_matrix, 
+         method = 'circle',
+         type = 'lower',
+         tl.col = "black", 
+         tl.srt = 45,
+         #addCoef.col = 'black',
+         col = colorRampPalette(c('red', 'white', 'blue'))(200),
+         addrect = 2,
+         title = 'Correlation Matrix',
+         mar = c(0, 0, 1, 0),
+         cl.pos = 'b',
+         cl.ratio = 0.2
+)
+
+
+```
+
+**Observations**
+*trmattmpt* and *totcr* are 97% correlated and one is unnecessary. I will eliminate *totcr*.
+*ihratt* is 92% correlated with *instearn*, therefore I will eliminate *ihratt*.
+*ihratt* is also 94% correlated with *ihrpass* so I will eliminate *ihrpass*.
+*ihrpass* is 100% correlated with *instearn*. So I will drop the *ihrpass*.
+*ihrgpa* is 99% correlated with *instearn*, *ihrpass*, and 95% correlated with *ihratt*. I will drop all but *ihrgpa*.
+*Ogpa* is 97% correlated with *instgpa* so I will drop *ogpa*. Overall GPA includes transfer credits, which not all students have. 
+Therefore, it makes the most sence to drop that.
+*ohrpass* and *ohearn* are 100% correlated, so I will drop the *ohrpass*.
+*Ohratt* is 94% correlated with *ohearn*. So I will drop *ohatt*. 
+
+
+### Drop Correlated Columns
+
+```{r include = F}
+
+# Select the relevant columns
+crhr_grades_mod <- crhr_grades %>%
+  dplyr::select('term_id', 'id', 'term', 'age', 'age_range', 'stype', 'resd_desc', 'gender', 'ethn_desc', 'prevhrs', 'pdx', 'persistence', 'styp', 'acdstd', 'trmattmpt', 'trmernd', 'trmgpa', 'instgpa', 'instearn', 'ohrern', 'ohrgpa')
+
+# Numeric Cols
+num_col <- select_if(crhr_grades_mod, is.numeric)
+
+# create combinations of numeric columns
+pairs(num_col,
+      panel = function(x, y) {
+        points(x, y)
+        abline(lm(y ~ x), col = 'dodgerblue')
+      })
+
+```
+
+### Violin Plots of Numeric Predictors
+
+```{r}
+
+# Init empty list
+plot_list = list()
+
+# Loop through numeric columns and create violin plots in relation to the response 'pdx'
+for (col in names(num_col[2:length(num_col)])) {
+  
+  means <- crhr_grades_mod %>% dplyr::group_by(pdx) %>% dplyr::summarize(mean_value = mean(get(col), na.rm = TRUE))
+  
+  p <- ggplot(crhr_grades_mod, aes_string(x = 'pdx', y = col, fill = 'pdx')) + 
+    geom_violin(trim = F, alpha = 0.6) + 
+    geom_boxplot(width = 0.1, fill = 'orange', alpha = 0.2) +
+    geom_text(data = means, aes_string(x = 'pdx', y = 'mean_value', label = 'paste("μ =", round(mean_value, 2))'), vjust = 1.2, hjust = 1.3) +
+    labs(title = paste('Violin Plot of ', col, ' vs PD 12x'),
+         y = col,
+         x = NULL) +
+    theme_minimal()
+  
+  plot_list[[col]] <- p
+  
+}
+
+# Arrange all the plots
+ggarrange(plotlist = plot_list[1:4], ncol = 2, nrow = 2)
+ggarrange(plotlist = plot_list[5:8], ncol = 2, nrow = 2)
+plot_list[[9]]
+
+ggsave('p1.png', plot = p1, width = 8, height = 6)
+ggsave('p2.png', plot = p2, width = 8, height = 6)
+ggsave('p3.png', plot = p3, width = 8, height = 6)
+
+
+```
+
+**Analysis of Violin Plots**
+
+    *Age*: Not surprisingly, since it is new students who are supposed to take PD 12x, we see that the mean age of students who take 
+              PD 12x is 22.68, which is lower than those who do not take it at 23.57 year old.
+    *Previous Credits*: Similarly, we should not be surprised by the previous hours in relation to the PD 12x course. Students who are
+              in the PD 12x course have completed fewer credits than those who did not take it. If a student has completed 21 or more
+              credits, they do not have to take the PD 12x course.
+    *Attempted Credits*: Attempted credits are in relation to the semester the student is in. They record the number of credits the 
+              student attempted to complete. It may seem surprising that students who took PD 12x attempted more credits, on average, than
+              students who did not take it (11.36 crhrs vs 9.02 crhrs), but the reality is that students who take the course are typically
+              in their first or second semester. Students in their first two semester, on average, take *more* credits than students who
+              are in later semesters. That is what we are seeing reflected here. 
+    *Earned Credits*: These are the credits students actually earned in the semester (trmernd). This is going to be correlative with
+              the attempted credits. Students in earlier semesters of their college careers attempt and earn more credits in the current
+              semester than those who are deeper into their academic careers. 
+    *Term GPA*: The term GPA *is* actually surprising. Students *who did not take* PD 12x, on average, had much higher GPAs than
+              students who did take it. The violin plot shows there is a strong distribution above 3.0 GPA and a large spike at 4.0 GPA.
+              Whereas the term GPA for students who took PD 12x has a comparatively slight distribution that peaks at 3.8 GPA. 
+    *Institutional GPA*: Again, overall, we see a much higher institutional GPA, which is the GPA the student has earned over all their
+              time at Butler, for students who *did not take* PD 12x versus those that did. 
+    *Institutional Earned CrHr*: We see a larger spike at 60 credits for students' institutional earned credit hours for those who did
+              not take PD 12x than those that did take it. The shape of the violin plot is roughly the same though, just more dramatic for
+              those that did not take PD 12x than those that did. 
+    
+    
+### Compare Categorical Variables With PD 12x Response
+
+```{r}
+
+cat_cols <- select_if(crhr_grades_mod, is.character)
+
+bar_plot_list = list()
+
+# Loop through categorical columns and create bar charts showing percentages
+for (cat_col in names(cat_cols[3:length(cat_cols)])) {
+
+  # Plot bar charts
+  plot <- ggplot(crhr_grades_mod, aes_string(x = cat_col, fill = 'pdx')) +
+    geom_bar(position = 'dodge') + 
+    labs(title = paste('Bar Chart of', cat_col, 'vs PD 12x'),
+         x = cat_col,
+         y = 'Count') + 
+    theme_minimal() + 
+    theme(axis.text.x = element_text(angle = 45,hjust = 1))
+  
+  bar_plot_list[[cat_col]] <- plot
+  
+}
+
+ggarrange(plotlist = bar_plot_list[1:4], nrow = 2, ncol = 2)
+ggarrange(plotlist = bar_plot_list[5:8], nrow = 2, ncol = 2)
+
+```
+
+```{r}
+
+results <- NULL
+
+# Chi squared test
+for (col in names(cat_cols[3:length(cat_cols)])){
+  
+  # Chi-Squared Test
+  chisq <- chisq.test(table(crhr_grades_mod[[col]], crhr_grades_mod$pdx))
+  
+  results <- rbind(results, chisq$p.value)
+}
+
+data.frame(p_val = results) %>%
+  cbind(Variable = names(cat_cols[3:length(cat_cols)])) %>%
+  dplyr::rename(p_val = p_val, Variable = Variable)
+
+
+
+```
+**Analysis of $\chi^2$ Test**
+
+There is a statistically significant association between each of the categorical variables and the response variable *pdx*.
+
+
+```{r include = F}
+
+# Convert pdx to 0 and 1
+crhr_grades_mod$pdx <- ifelse(crhr_grades_mod$pdx == 'PD 12x', 1, 0)
+
+# Perform matching
+matched <- matchit(pdx ~ term + age + stype + resd_desc + gender + ethn_desc + prevhrs + acdstd + trmattmpt + 
+                   trmernd + trmgpa + instgpa + instearn + ohrern + ohrgpa, method = 'nearest', 
+                   distance = 'logit', data = crhr_grades_mod)
+
+# Match data
+matched_data <- match.data(matched)
+
+# Create column to identify matched pairs
+matched_data$pair_id <- as.factor(1:nrow(matched_data) / 2)
+
+# View summary output of matched data
+summary(matched)
+
+# Percent persisted of all students
+table(matched_data$persistence) / sum(table(matched_data$persistence))
+
+## Not Persisted     Persisted 
+##    0.3016579     0.6983421 
+
+# Check the overlap of the propensity scores
+ggplot(matched_data, aes(x = distance, fill = factor(pdx))) +
+  geom_density(alpha = 0.4) +
+  labs(title = "Density Plot of Propensity Scores",
+       x = "Propensity Score",
+       fill = "Treatment Group") +
+  theme_minimal()
+
+```
+
+**Density Plot of Propensity Scores**
+
+Recall, the propensity scores are a probability score given to each student relative to each semester and therefore are represented as a decimal falling between 0 and 1. So one of the ways we can visualize how well the propensity scores from each group overlap is to use a density plot. "1" represents students who were in a PD 12x course in a given semester, and "0" represents students who were not enrolled in a PD 12x course in a given semester. This density plot shows remarkable overlap, so much so that you can hardly see any difference between the treatment and control groups, which means the one-to-one matching is almost identical in every way. This means each student in the treatment group is matched to a student from the control group with all the variables identically aligned--term, age, stype, resd_desc, gender, ethn_desc, prevhrs, acdstd, trmsttmpt, trmernd, trmgpa, instgpa, instearn, ohrern, and ohrgpa.
+
+The persistence was actually 0.39827 for not persisted and 0.60172 for persisted before doing the propensity score matching. Therefore, I will run an analysis both with the propensity score matching and with just using hte *pdx* as a predictor without the propensity score matching.
+
+When doing a propensity score analysis, you should always validate the findings to make sure the treatment and control groups are behaving the way you believe them to be. This is the process of assessing covariate balance; we want to ensure that the distribution of covariates are roughly equivalent between the two groups.
+
+First, we can calculate the standardized mean differences (SMD).
+
+```{r}
+
+# Standardized Mean Differences
+bal.tab(matched)
+
+```
+
+The SMD shows excellent balance between the two groups. All the differences between the groups approach zero. Generally, an absolute value below 0.10 is considered good. All of these differences are well below that threshold. We should also visually inspect the balance with love plots.
+
+```{r}
+
+# View love plot Standardized
+love.plot(matched, stars = 'std', abs = FALSE)
+
+```
+
+Check for overlap.
+
+```{r}
+library(rbounds)
+
+# Overlap
+plot(matched, type = 'hist')
+
+# Sensitivity Analysis: Checks how sensitive results are to hidden biases
+dup_matched_data <- matched_data
+
+dup_matched_data$persistence <- ifelse(dup_matched_data$persistence == 'Persisted', 1, 0)
+
+psens(dup_matched_data$persistence, matched_data$pdx, Gamma = 1.5)
+
+```
+
+# Logistic Regression
+
+## Set Up Dataframe for Logistic Regression
+
+All categorical variables need to be changed to factors. The problem with scaling here before splitting is data leakage. I should also run the model after splitting and then scaling. At present, the scaling did not materially impact the predictive quality of the model.
+
+```{r}
+
+# Store categorical variable names we need to change to factors
+cat_col_names <- names(cat_cols[4:ncol(cat_cols)])
+
+for (column in cat_col_names) {
+  
+  matched_data[[column]] <- as.factor(matched_data[[column]])
+  
+}
+
+# Numeric columns 
+numeric_columns <- matched_data %>%
+  select_if(is.numeric)
+
+# Scale numeric values
+scaled_numeric_columns <- as.data.frame(scale(numeric_columns))
+
+# Combine scaled numeric columns with the rest of the df
+scaled_data <- matched_data %>%
+  dplyr::select(-one_of(names(numeric_columns))) %>%
+  bind_cols(scaled_numeric_columns)
+
+# alter good standing 
+scaled_data$acdstd <- relevel(scaled_data$acdstd, ref = 'GS')
+
+```
+
+## Split Data
+
+```{r}
+
+# Create train/test split
+training.samples <- scaled_data$persistence %>%
+                     createDataPartition(p = 0.8, list = FALSE)
+
+train.data <- scaled_data[training.samples, ]
+test.data <- scaled_data[-training.samples, ] 
+
+```
+
+## Apply Logistic Regression Model
+
+Removed *ohrern* and *ohrgpa* as they had tremendous multicollinearity verified with VIF test. When a correlation analysis was ran on these two predictors, they were 98% correlated. Then when I ran an ANOVA test on a model with the two predictors and without, the model did not perform statistically significantly better with their addition. Moreover, their AIC did not diminish significantly with their removal.
+
+When *m1_lr* was reran, the removal of these did not diminish the accuracy, sensitivity, or specificity at all, further confirming the need to remove these predictors.
+
+```{r}
+
+# Create logistic regression
+m1_lr <- glm(persistence ~ age + stype + resd_desc + gender + ethn_desc + prevhrs + pdx + acdstd + trmattmpt + trmernd + 
+               trmgpa + instgpa + instearn, family = binomial(link = 'logit'), data = train.data)
+
+# Predict with new model
+pred_m1_lr <- predict(m1_lr, newdata = test.data, type = 'response')
+
+pred_m1_lr_class <- ifelse(pred_m1_lr > 0.5, 'Persisted', 'Not Persisted') %>%
+  as.factor()
+
+# Confusion matrix
+confusionMatrix(pred_m1_lr_class, test.data$persistence)
+
+summary(m1_lr)
+
+```
+
+**LR Analysis**
+
+What a beautiful outcome. The LR has an 86.78% overall accuracy rate. Not too surprisingly, the *specificity*, which in this model is the measurement of students who are most likely to persist, is much higher than the *sensitivity*. Specificity measures the *True Negative Rate* and the *sensitivity* measures the *True Positive Rate*. In our case here, the positive class is are those students who did not persist from one semester to another. The two measurements are given by the following equations:
+
+$$\text{Sensitivity} = \frac{\text{True Positives}}{\text{True Positives} + \text{False Negatives}} = \frac{403}{403 + 99} = 0.8028$$
+
+$$\text{Specificity} = \frac{\text{True Negatives}}{\text{True Negatives} + \text{False Positives}} = \frac{1041}{1041 + 121} = 0.8959$$
+
+It is not surprising that the specificity is better because nearly 70% of students in the matched groups persisted from one semester to another. Whatever the dominant group is, the model typically predicts with greater accuracy. The *TPR* was 0.7869, indicating that the model correctly identifies which students will not persist from one semester to another about 79% of the time. The *TNR* is 0.8916 and indicates that the model correctly predicts which students will persist from one semester to another 89% of the time. This is a model that has good explanatory power for the predictors. In a later section, we will examine what the predictors tell us, including whether students being enrolled in a PD 12x course has any statistically significant effect on a student's persistence from one semester to another. 
+
+**Checking for Over Dispersion**
+
+Over-dispersion is used to assess the goodness of fit, particularly for models that assume a certain distribution of the error terms, such as with a binomial distribution in logistic regression. For logistic regression, the dispersion parameter is typically assumed to be one because the variabnce is a function of the mean. The formula for the dispersion parameter is:
+
+$$\hat{\phi} = \frac{1}{n - p} \sum_{i = 1}^n \frac{(y_i - \hat{y_i})^2}{y_i(1 - \hat{y_i})}$$
+where $n$ is the number of observations, *p* is the number of parameters in the model, $y_i$ is the observed value, and $\hat{y_I}$ is the
+predicted probability.
+
+This is equivalent to calculating the residual deviance divided by the degrees of freedom.
+
+$$\hat{\phi} = \frac{\text{Residual Deviance}}{\text{Degress of Freedom}}$$
+
+In this case, the residual deviance was 4802.60 and the degrees of freedom were 6626. Therefore:
+
+$$\frac{4802.60}{6626} = 0.7248$$
+
+A dispersion parameter ($\hat{\phi}$) of 0.725 suggests a slight underdispersion in the model since the value is less than 1. Therefore, we can conclude the model is *not* overdispersed.
+
+### Model Significance
+
+```{r include = FALSE}
+
+# Is the model significant at a p-value of 0.01
+1 - pchisq((m1_lr$null.deviance - m1_lr$deviance), 
+                  (m1_lr$df.null - m1_lr$df.residual))
+
+```
+
+Just as the confusion matrix confirms, the model is statistically significant, meaning it is better than guessing, which is a low threshold. 
+
+### Examine Fitted Vs Residuals
+
+```{r include = F}
+
+# Pearson Residual Plot
+pears_res <- resid(m1_lr, type = 'pearson')
+
+plot(m1_lr$fitted.values, pears_res,
+     main = 'Fitted vs. Residuals',
+     xlab = 'Fitted Values', 
+     ylab = 'Residuals',
+     pch = 19,
+     cex = 0.8,
+     col = 'blue')
+
+# Deviance Residual Plot vs Fitted Values
+dev_resid <- resid(m1_lr, type = 'deviance')
+
+plot(m1_lr$fitted.values, dev_resid,
+     main = 'Fitted vs. Residuals',
+     xlab = 'Fitted Values', 
+     ylab = 'Residuals',
+     pch = 19,
+     cex = 0.8,
+     col = 'blue')
+
+# Histogram of Deviance Residuals
+hist(dev_resid, 
+     main = "Histogram of Deviance Residuals", 
+     xlab = "Deviance Residuals")
+
+# QQplot of deviance residuals
+qqnorm(dev_resid)
+qqline(dev_resid)
+
+# Leverage and Inflence Points (i.e. outliers)
+M1_cooks <- cooks.distance(m1_lr)
+
+plot(M1_cooks[which(M1_cooks < 4/length(M1_cooks))])
+
+```
+
+
+### Deviance residuals, VIF, Plot Resids, Hosmer-Lemeshow Test for Goodness-of-fit, Likelihood Ratio Test
+
+```{r}
+
+#Deviance
+dev <- 1 - pchisq(m1_lr$deviance, m1_lr$df.residual)
+
+dev
+
+library(car)
+library(ResourceSelection) #for hoslem() method
+
+#-------------------------------------
+# Observe Variance Inflation Factor
+#-------------------------------------
+vif(m1_lr)
+
+#--------------------------------------------------------
+# Plot residuals to see if any assumptions are violated
+#--------------------------------------------------------
+residuals <- residuals(m1_lr, type = 'deviance')
+plot(residuals, main = 'Plot of Residuals of Logistic Regression Model')
+
+# Plot cooks distance to view outliers
+plot(cooks.distance(m1_lr), type = 'h', main = "Cook's Distance", ylab = "Cook's Distance")
+
+#-------------------------------------------------
+# Goodness-of-fit Test: Run Hosmer-Lemeshow test
+#-------------------------------------------------
+hoslem.test(m1_lr$y, fitted(m1_lr))
+
+#-------------------------------------------
+# Likelihood Ratio Test
+#-------------------------------------------
+# Compare nested models; One complete (m1_lr) and one without the pdx variable (m2_lr)
+# This will show if the model significantly improves with the addition of the pdx var
+m2_lr <- glm(persistence ~ age + stype + resd_desc + gender + pdx + ethn_desc + prevhrs + 
+               acdstd + trmattmpt + trmernd + trmgpa + instgpa + instearn, 
+               family = binomial(link = 'logit'), data = train.data)
+
+anova(m1_lr, m2_lr, test = 'LRT')
+
+library(naniar)
+
+collinear_cols <- c('ohrern', 'ohrgpa')
+
+mcar_data <- matched_data[,setdiff(names(matched_data), collinear_cols)]
+
+gg_miss_upset(data = crhr_grades)
+```
+
+**Analysis of Deviance Residuals**
+
+The deviance is 1 which means we fail to reject the null hypothesis and conclude that the model is a good fit. 
+
+### Hosmer-Lemeshow Goodness of Fit Test
+
+	The Hosmer-Lemeshow GOF test also produced a p-value of 0.4586, indicating that we fail to reject the null hypothesis and conclude that the model adequately describes the relationship between the predictors and the outcome variable.
+
+### Assessing Multicollinearity
+
+	After calculating the Variance Inflation Factor to check for multicollinearity in the predictors, two predictors were identified—ohern and ohrgpa. An analysis of their correlation showed they were 98% correlated. An ANOVA test comparing the original model to a second model with these two removed found the model was not significantly improved by keeping them in the model. Furthermore, the AIC was not significantly diminished when removing them. Finally, the performance of the model remained identical; the accuracy, specificity, and sensitivity did not change. As a consequence, these two predictors were removed from the model as they provide no additional explanatory power.
+
+### Likelihood Ratio Test
+
+	The Likelihood Ratio Test (LRT) is a statistical test to compare the goodness of fit between two nested models. Nested models are models where one model is a special case of the other. The LRT evaluates whether the more complex model provides a significantly better fit to the data than the simpler model. In our case, the complex model is the one in which we leave the pdx variable in and the simpler model is the model without pdx. The goal is to determine if the model that has the pdx variable significantly improves the fit to the data over a model that excludes it altogether. If it improves it, then there is some reason to keep the predictor. Other analysis are also done to examine its impact on the response variable of persistence; this is just a starting point. 
+
+    * Model 1: Compare persistence against age, stype, resd_desc, gender, ethn_desc, prevhrs, pdx, acdstd, trmattmpt, trmernd, trmgpa, instgpa, and instearn.
+    * Model 2: Compare persistence against age, stype, resd_desc, gender, ethn_desc, prevhrs, acdstd, trmattmpt, trmernd, trmgpa, instgpa, and instearn.
+
+	The final p-value of the LRT was 1, indicating that there is no evidence to suggest that Model 1, which includes pdx, fits the data any better than Model 2, which excludes it altogether as a predictor. In other words, the inclusion of whether a student was enrolled in a PD 12x course or not does not affect the model’s ability to correctly identify which students persist or not. It has no statistically significant effect on persistence.
+	
+## Examing Logistic Regression Coefficients
+
+Now that we have established that the model is statistically significant, that it is a good fit, and that it is not overdispersed, let us turn our attention to what the model tells us about each predictor in relation to the binary response variable of persistence versus non-persistence. 
+
+A key point to remember that will not be stated before every interpretation is that each conclusion below is written with the assumption of *ceteris paribus*, or "assuming all other variables are held constant," or, "all things being equal." 
+
+```{r echo = F}
+
+library(knitr)
+
+# Persistence is the positive class here; so every coefficient is in relation to that
+coeff_df <- summary(m1_lr)$coeff %>%
+  data.frame()
+
+OR_Percent <- vector()
+
+for (rows in rownames(coeff_df)){
+  
+  OR <- exp(coeff_df[rows, 'Estimate'])
+  
+  # Check if the OR is greater than 1
+  if (OR > 1) {
+    
+    # Calculate the percentage increase in odds
+    OR_Percent[[rows]] <- (OR - 1) * 100
+  } else {
+    
+    # Calculate the percentage decrease in odds
+    OR_Percent[[rows]] <- (1 - OR) * 100
+  }
+}
+
+# view summary output of LR
+summary(m1_lr)
+
+# View odds ratio as percent
+OR_Percent %>% 
+  data.frame() %>%
+  dplyr::rename('OR_Percent' = '.')
+  #kable()
+
+```
+
+**PD 12x**
+
+First, let's get to the most burning question, the one that this whole analysis set out to examine. If a student took PD 12x in a given semester, does that result in the student having higher odds of persisting from one semester to another?
+
+Recall, we have applied propensity score matching to align the control group with the treatment group. The treatment group being students who took PD 12x. This way, we have matched students with near identical demographic, credit hours, and GPA characteristics that both took and did not take PD 12x in a given semester. 
+
+When all of these other predictors are considered in tandem with whether a student took PD 12x or not, we find that the odds a student who took PD 12x will persist are only 4.20% higher than those who did not take it. Importantly, the p-value for this predictor is 0.564353, meaning it is not statistically significantly non-zero. 
+
+It has absolutely no statistical significance in predicting whether a student persists from one semester to another. Not only that, this is a *causal inference* analysis. Therefore, we can reasonably suggest that PD 12x *does not have a causal* relationship with student persistence.
+
+This is a good lesson in why we do not do simple logistic regression--comparing just one predictor to the response--when we can include other predictors. The strength and significance of a predictor changes as other confounding variables are included in the analysis. This multiple logistic regression clearly demonstrates that the PD 12x course has had no statistically significant effect on persistence over the last five years. Therefore, forcing all new students to take this course and offering it for free would all be for naught. Not only that, ultimately the college would be giving away over $350,000 of credits, not including the faculty salary cost to teach the course. This would be a very bad investment.
+
+So what predictors actually drive persistence if not enrollment in PD 12x?
+
+**Age**
+
+For each additional year that someone is alive, the odds they will persist from one semester to another, given they have completed PD 12x, raises by 1.68%. These are the log odds, so it has to be calculated with that in mind or your calculation does not come out correctly. What is interesting here is that this is counter to what is true of Butler's data when all students are considered and not just this limited cohort of students who took PD 12x matched with propensity score matching. Consequently, this tells us that the presence of PD 12x actually *inverts* the age predictor and its effect on the likelihood a student persists from one semester to another! 
+
+Normally, we see that as the age increases, the likelihood a student persists actually *decreases* rather than increases. Let's consider a few concrete examples. These probabilities are considering only if a student has taken PD 12x and their age. Probability is a different calculation mathematically than the log odds. This is the actual probability that a student will persist given they have taken PD 12x relative to their age. 
+
+For an 18 year old, the probability they will persist is 1.16%. Remember, this is a simplified regression equation; there are many more significant predictors than age. PD 12x, again, is not a significant predictor of persistence. Now a student who is 20 years old and has taken PD 12x has a probability of persisting to the next semester of 1.20%. If we carry this out to a 40 year old, the probability they will persist, give they have completed PD 12x is 1.66%. So again, as the age increases, the probability the student persists increases, but by vanishingly small margins.
+
+This is interesting because the inverse of this relationship is that the younger a student is who takes PD 12x, the less effective it seems to be as the probability a student persists actually decreases as the get younger. It seems to have a *negative impact* on student persistence for younger students. My guess is there is more going on than this and it is a proxy for other issues about which we could only speculate without more information. 
+
+
+```{r echo = F}
+
+# Coefficients
+beta_0 <- -4.786688
+beta_1 <- 0.016652
+beta_2 <- 0.041177
+
+# Create an empty data frame to store age and probability
+prob_df <- data.frame(age = integer(), probability = numeric())
+
+# Loop through ages 18 to 60
+for (age in 18:60) {
+  # Calculate logit
+  logit_p <- beta_0 + beta_1 * age + beta_2 * 1
+  # Calculate probability
+  p <- 1 / (1 + exp(-logit_p))
+  # Append the results to the data frame
+  prob_df <- rbind(prob_df, data.frame(age = age, probability = p))
+}
+
+# Plotting using ggplot2
+ggplot(prob_df, aes(x = age, y = probability)) +
+  geom_line(color = "blue") +
+  labs(title = "Probability of Persistence by Age",
+       x = "Age",
+       y = "Probability of Persistence") +
+  theme_minimal()
+
+prob_df %>%
+  kable()
+
+```
+
+**Student Type**
+
+The reference group for student type is continuing students. There were two student types that were statistically significant below the $\alpha$-value of 0.05: Guest students (p = 0.0379) and New students (p = 0.0040). The odds a guest student persists from one semester to another are 3.38 times less than continuing students. The odds a new student persists is 0.3137 times higher than for continuing students. To translate this into an odds ratio (OR) as a percentage, one must use the natural log of the coefficients for each predictor.
+
+$$\text{OR} = e^{coefficient}$$
+
+If OR is greater than one, then you must subtract 1 and multiply by 100 to get the percentage $(OR - 1) * 100 = \text{percentage}$. If the OR is less than one, then you must take 1 minus the OR $(1 - OR) * 100 = \text{percentage}$. 
+
+So the odds a guest student persists is 96.58% less than that of a continuing student. The odds a new student persists is 3.99% more than a continuing student. 
+
+**Residency Type and Ethnicity**
+
+When considered with these other predictors, not a single residency type or ethnicity was statistically significantly associated with the probability a student persists from one semester to another. This also demonstrates that when these demographic characteristics are considered along with other predictors, they lose their strength and significance compared to when they are considered in isolation. One should be weary of analysis that are univariate. 
+
+**Previous Hours**
+
+The number of credit hours a student has completed going into the current semester is statistically significantly related to the odds of persistence (p = 0.0001). For each additional credit hour a student has completed going into the current semester, the odds he/she will persist are 0.1461 times less. This makes sense as students are more likely to graduate, transfer, or stop out the further they get into their academic career.
+
+**Academic Standing**
+
+The odds a student who has no academic standing at the end of the semester (denoted as simply '0' in Banner) will persist is 1.43 times lower than for a student who is in good academic standing. This predictor has a p-value of 0.0001. The predictor for students on academic probation has a p-value of 0.0001. The odds a student on probation persist from one semester to another are 0.8224 times less than students in good standing. The odds a student on academic suspension persist from one semester to another are 0.9508 times less than students in good standing (p = 0.0001). 
+
+Represented as a percentage, it is far more impressive. 
+
+'0' students are 76.08% less likely to persist from one semester to another compared to students in good standing. Probation students are 56.06% less likely to persist from one semester to another than students in good standing. Academic Suspension students are 61.36% less likely to persist than students in good standing. 
+
+**Credits and GPA**
+
+Credit hours attempted for the current term is statistically significant (p = 0.0001).
+Credit hours earned for the current term is statistically significant (p = 0.0001).
+End of Term GPA is statistically significant (p = 0.0001).
+Institutional GPA is statistically significant (p = 0.0001).
+Total institutionally earned credits is statistically significant (p = 0.0001).
+Overall earned credit hours is statistically significant (p = 0.0001).
+Overall GPA is statistically significant (p = 0.0001).
+
+Without belaboring these other predictors, the undeniable reality sets in that the PD 12x course, when considered in conjunction with these other predictors, has no discernible impact on student persistence.
+
+## Concluding Remarks
+
+This was a causal inference analysis to ascertain whether students taking the PD 12x course over the last five years persist at greater rates than students who did not take the course. The analysis shows clearly that taking the PD 12x course does not have a causal relationship with student persistence in any way. 
