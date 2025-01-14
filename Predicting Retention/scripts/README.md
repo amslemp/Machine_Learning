@@ -36,5 +36,6 @@ Once the model is trained and saved, it is used to make predictions on the new, 
 
 - **`prediction.py`**
   - Loads the trained model and generates predictions on new, unseen data.
+  - Saves predictions to specified folder for use in Power BI dashboard.
 
 ---
