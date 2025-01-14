@@ -9,6 +9,8 @@ The base of the pipeline is `data_cleaning.py`. Subsequent scripts depend on thi
 
 - **`data_cleaning.py`**
   - The main script that orchestrates the data cleaning process.
+  - Cleans and wrangles data from Enrollment, GPA and Crhrs, Pell and Loan, Location, and High School Enrollment.
+    - After cleaning, combines all of the elements, engineered features, and imputed data into one dataframe.
   - **Used by**:
     - `pipeline_steps.py`: Contains modular functions for specific pipeline operations.
     - `main_pipeline.py`: Pipeline that executes all of the cleaning/wrangling code.
