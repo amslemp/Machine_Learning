@@ -37,4 +37,4 @@ The probability a student will be enrolled the following Fall if they have compl
 
 ## Effects of Intervention
 
-This model had significant impacts in student retention. Retention rose by 8.57% compared to previous years, setting a record for the college. Not only was there increases sales (i.e. enrollment) from the implementation of the model, there was increased funding. The college received nearly $2,000,000 in additional funding as a result of the efforts of the advising office implementing this model.
+This model had significant impacts in student retention. Retention rose by 8.57% compared to previous years, setting a record for the college. Not only was there increases sales (i.e. enrollment) from the implementation of the model, there was increased funding. The college received nearly $2,000,000 in additional funding as a result of the efforts of the advising office implementing this model. In the second year of use, this model helped us completely reverse an eight year decline and put revenue up 9% YoY. This is far more that just increasing retention. This was a dramatic shift from being down two percent to being up seven percent, a nine point shift. 
