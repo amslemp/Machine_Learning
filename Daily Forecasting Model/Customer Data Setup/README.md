@@ -6,7 +6,7 @@ This model is the primary driver of daily revenues for the organization and has 
 
 `utlities.py`: This module holds the csv opening script. It is utilized in the `dashboard_pipeline.py` module. 
 `preprocess.py`: Module that sets up all of the data. This module does the heavy lifting. 
-    --> `dashboard_pipeline.py`: Module creates the pipeline that is executed. 
-        --> `run_pipeline.py`: Module that executes pipeline in production.
+    | `dashboard_pipeline.py`: Module creates the pipeline that is executed. 
+        | `run_pipeline.py`: Module that executes pipeline in production.
 
 This is just the first step of the daily revenues model.
